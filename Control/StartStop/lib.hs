@@ -1,7 +1,7 @@
 {-# LANGUAGE RecursiveDo #-}
-module Control.AnotherFRPLib where
+module Control.StartStop.Lib where
 
-import Control.AnotherFRP
+import Control.StartStop.Core
 import Control.Monad.Reader
 import Control.Monad.Writer.Strict
 

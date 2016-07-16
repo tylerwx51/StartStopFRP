@@ -1,4 +1,4 @@
-module Control.AnotherFRP where
+module Control.StartStop.Core where
 
 import Control.Applicative
 import Control.Monad.Reader
