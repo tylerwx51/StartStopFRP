@@ -99,16 +99,27 @@ mergefEs f (EvStream mel) (EvStream mer) = memoEvs $ EvStream $ do
     (FiredNow _ _, FiredNow _ _) -> return $ liftA2 f el er
 
 pull :: EvStream t (Hold t (Maybe a)) -> EvStream t a
-pull Never = Never
-pull (EvStream me) = memoEvs $ EvStream $ do
+pull = catMabyeEs . startOnFire
+
+startOnFire :: EvStream t (Hold t a) -> EvStream t a
+startOnFire Never = Never
+startOnFire (EvStream me) = memoEvs $ EvStream $ do
   eInfo <- me
   case eInfo of
     NotFired -> return NotFired
-    FiredNow hma pma -> do
-      (ma, pa) <- runWriterT hma
-      case ma of
-        Nothing -> return NotFired
-        Just a -> return $ FiredNow a (pma <> pa)
+    FiredNow ha pha -> do
+      (a, pa) <- runWriterT ha
+      return $ FiredNow a (pha <> pa)
+
+catMabyeEs :: EvStream t (Maybe a) -> EvStream t a
+catMabyeEs Never = Never
+catMabyeEs (EvStream me) = memoEvs $ EvStream $ do
+  eInfo <- me
+  case eInfo of
+    NotFired -> return NotFired
+    FiredNow ma pma -> case ma of
+      Nothing -> return NotFired
+      Just a -> return $ FiredNow a pma
 
 coincidence :: EvStream t (EvStream t a) -> EvStream t a
 coincidence Never = Never
