@@ -335,15 +335,18 @@ instance Monoid (Plans t) where
   mempty = Plans never
   mappend (Plans el) (Plans er) = Plans $ mergefEs (<>) el er
 
-type HoldIO t = WriterT (Plans t, Pushes t) (Sample t)
+data Env = Env { clock :: IO Time, scheduleRound :: IO () }
+type PlanHold t = WriterT (Plans t, Pushes t) (ReaderT Env IO)
 
-liftHold :: Hold t a -> HoldIO t a
+liftHold :: Hold t a -> PlanHold t a
 liftHold h = do
-  (a, p) <- lift $ runWriterT h
+  iot <- asks clock
+  t <- liftIO iot
+  (a, p) <- liftIO $ runReaderT (runWriterT h) t
   tell (mempty, p)
   return a
 
-planEs :: EvStream t (IO a) -> HoldIO t (EvStream t a)
+planEs :: EvStream t (IO a) -> PlanHold t (EvStream t a)
 planEs Never = return Never
 planEs evs = do
   plans <- liftIO $ unsafeIOSequence evs

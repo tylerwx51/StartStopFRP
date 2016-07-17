@@ -48,7 +48,7 @@ cabal-version:       >=1.10
 
 library
   -- Modules exported by the library.
-  exposed-modules: Control.StartStop.Core, Control.StartStop.Lib, Control.StartStop.TestFun
+  exposed-modules: Control.StartStop.Core, Control.StartStop.Lib, Control.StartStop.TestFun, Control.StartStop.EvPrim
 
   -- Modules included in this library but not exported.
   -- other-modules:
@@ -60,7 +60,7 @@ library
   build-depends:       base >=4.8 && <4.9, mtl
 
   -- Directories containing source files.
-  hs-source-dirs:      
+  hs-source-dirs:
 
   -- Base language which the package is written in.
   default-language:    Haskell2010

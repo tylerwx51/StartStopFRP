@@ -5,6 +5,8 @@ import Control.StartStop.Core
 import Control.Monad.Reader
 import Control.Monad.Writer.Strict
 
+import Data.IORef
+
 pullAlways :: EvStream t (Hold t a) -> EvStream t a
 pullAlways = pull . fmap (fmap Just)
 
@@ -197,27 +199,46 @@ testHold numRounds hb = do
           ioAction
           loop (i + 1) (EvStream mPush) b
 
-test5 :: HoldIO t (Behavior t String)
+test5 :: PlanHold t (Behavior t String)
 test5 = do
   ev1 <- liftHold $ testEv [(T 1, print "Test1" >> return "FDSL"), (T 6, print "LAKSDJLA" >> return "SLLSL")]
   ev2 <- planEs ev1
   liftHold $ holdEs ev2 "__()"
 
-testHoldIO :: (Show a) => HoldIO t (Behavior t a) -> IO ()
-testHoldIO hb = do
-  (b, (Plans plans, Pushes pushes)) <- runReaderT (runWriterT hb) (T 0)
-  loop 0 pushes plans b
-  where
-    loop :: (Show a) => Integer -> EvStream t (IO ()) -> EvStream t () -> Behavior t a -> IO ()
-    loop i (EvStream mPush) (EvStream mPlans) b = when (i < 20) $ do
-      runReaderT mPlans (T i)
-      didPush <- runReaderT mPush (T i)
 
-      (v, _) <- runReaderT (runWriterT $ sample b) (T i)
-      liftIO $ print (i, v)
+test12 :: EvStream t Integer -> PlanHold t (Behavior t String)
+test12 evs = do
+  b <- liftHold $ holdEs evs (negate 1)
+  planEs $ print "Cheese" <$ filterEs odd evs
+  return $ return ""
 
-      case didPush of
-        NotFired -> loop (i + 1) (EvStream mPush) (EvStream mPlans) b
-        FiredNow ioAction _ -> do
-          ioAction
-          loop (i + 1) (EvStream mPush) (EvStream mPlans) b
+initPlanHold :: (IO () -> IO ()) -> PlanHold t () -> IO ()
+initPlanHold scheduleAction ph = do
+  clockRef <- newIORef (T 0)
+  scheduleRef <- newIORef 0
+
+  rec
+    let env = Env (readIORef clockRef) (modifyIORef scheduleRef (+1) >> scheduleAction loop)
+
+        planSample = case planEvs of
+                        Never -> return NotFired
+                        EvStream me -> me
+
+        pushesSample = case pushesEv of
+                          Never -> return NotFired
+                          EvStream me -> me
+
+        loop = do
+          t <- readIORef clockRef
+          runReaderT planSample t
+          eioaction <- runReaderT pushesSample t
+          case eioaction of
+            NotFired -> return ()
+            FiredNow ioaction _ -> ioaction
+
+          modifyIORef clockRef (\(T i) -> T $ i + 1)
+          modifyIORef scheduleRef (subtract 1)
+
+    ((), (Plans planEvs, Pushes pushesEv)) <- runReaderT (runWriterT ph) env
+
+  return ()
