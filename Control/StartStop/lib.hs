@@ -210,7 +210,7 @@ test12 :: EvStream t Integer -> PlanHold t (Behavior t String)
 test12 evs = do
   b <- liftHold $ holdEs evs (negate 1)
   planEs $ print "Cheese" <$ filterEs odd evs
-  return $ return ""
+  return $ fmap show b
 
 initPlanHold :: (IO () -> IO ()) -> PlanHold t () -> IO ()
 initPlanHold scheduleAction ph = do

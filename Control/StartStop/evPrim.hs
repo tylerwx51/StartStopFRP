@@ -5,8 +5,8 @@ import Control.Monad.Reader
 
 import Data.IORef
 
-newEvStream :: PlanHold t (a -> IO (), EvStream t [a])
-newEvStream = do
+callbackStream :: PlanHold t (a -> IO (), EvStream t [a])
+callbackStream = do
   cl <- asks clock
   sr <- asks scheduleRound
   firedValsRef <- liftIO $ newIORef []
