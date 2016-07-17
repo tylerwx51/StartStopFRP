@@ -14,7 +14,7 @@ testPlanHold n = do
   sampleRef <- newIORef ""
 
   initPlanHold (\a -> modifyIORef actionsRef (\as -> as ++ [a])) $ do
-    (trigger, clock) <- newEvStream
+    (trigger, clock) <- callbackStream
     liftIO $ writeIORef clockTriggerRef trigger
     b <- test12 $ fmap head clock
     let r = startOnFire $ sampleAfter b <$ clock

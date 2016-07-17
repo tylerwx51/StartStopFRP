@@ -7,8 +7,8 @@ import Data.IORef
 
 callbackStream :: PlanHold t (a -> IO (), EvStream t [a])
 callbackStream = do
-  cl <- asks clock
-  sr <- asks scheduleRound
+  cl <- PlanHold $ asks clock
+  sr <- PlanHold $ asks scheduleRound
   firedValsRef <- liftIO $ newIORef []
 
   let trigger v = do

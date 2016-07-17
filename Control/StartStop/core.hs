@@ -1,3 +1,4 @@
+{-# LANGUAGE MultiParamTypeClasses, FlexibleInstances, GeneralizedNewtypeDeriving #-}
 module Control.StartStop.Core where
 
 import Control.Applicative
@@ -34,7 +35,20 @@ instance Monoid (Pushes t) where
   mappend (Pushes el) (Pushes er) = Pushes $ mergefEs (>>) el er
 
 type Sample t = ReaderT Time IO
-type Hold t a = WriterT (Pushes t) (Sample t) a
+newtype Hold t a = Hold { unHold :: WriterT (Pushes t) (Sample t) a } deriving (Functor, Applicative, Monad, MonadFix)
+newtype HoldIO t a = HoldIO { unHoldIO :: WriterT (Pushes t) (Sample t) a } deriving (Functor, Applicative, Monad, MonadFix, MonadIO)
+
+class (Monad (m t)) => MonadHold m t where
+  liftHold :: Hold t a -> m t a
+
+instance MonadHold HoldIO t where
+  liftHold (Hold rw) = HoldIO rw
+
+runPushes :: Hold t a -> Sample t (a, Pushes t)
+runPushes (Hold h) = runWriterT h
+
+runPushesIO :: HoldIO t a -> Sample t (a, Pushes t)
+runPushesIO (HoldIO h) = runWriterT h
 
 data EvInfo t a = NotFired | FiredNow a (Pushes t)
 
@@ -98,9 +112,6 @@ mergefEs f (EvStream mel) (EvStream mer) = memoEvs $ EvStream $ do
     (NotFired, FiredNow r p) -> return $ FiredNow r p
     (FiredNow _ _, FiredNow _ _) -> return $ liftA2 f el er
 
-pull :: EvStream t (Hold t (Maybe a)) -> EvStream t a
-pull = catMabyeEs . startOnFire
-
 startOnFire :: EvStream t (Hold t a) -> EvStream t a
 startOnFire Never = Never
 startOnFire (EvStream me) = memoEvs $ EvStream $ do
@@ -108,7 +119,7 @@ startOnFire (EvStream me) = memoEvs $ EvStream $ do
   case eInfo of
     NotFired -> return NotFired
     FiredNow ha pha -> do
-      (a, pa) <- runWriterT ha
+      (a, pa) <- runPushes ha
       return $ FiredNow a (pha <> pa)
 
 catMabyeEs :: EvStream t (Maybe a) -> EvStream t a
@@ -133,9 +144,9 @@ coincidence (EvStream em) = memoEvs $ EvStream $ do
         NotFired -> return NotFired
         FiredNow a p2 -> return $ FiredNow a (p1 <> p2)
 
-unsafeIOSequence :: EvStream t (IO a) -> IO (EvStream t a)
-unsafeIOSequence Never = return Never
-unsafeIOSequence (EvStream emio) = do
+unsafeHoldIOSequence :: EvStream t (HoldIO t a) -> IO (EvStream t a)
+unsafeHoldIOSequence Never = return Never
+unsafeHoldIOSequence (EvStream emio) = do
   ref <- liftIO $ newIORef Nothing
   let unsafeEvs = do
         curTime <- ask
@@ -147,20 +158,26 @@ unsafeIOSequence (EvStream emio) = do
             mio <- emio
             case mio of
               NotFired -> return NotFired
-              FiredNow iov p -> do
-                v <- liftIO iov
+              FiredNow hiov p -> do
+                (v, pv) <- runPushesIO hiov
                 t <- ask
-                liftIO $ writeIORef ref (Just (t, v, p))
+                liftIO $ writeIORef ref (Just (t, v, p <> pv))
                 return $ FiredNow v p
 
   return $ EvStream unsafeEvs
 
-{-# NOINLINE unsafeIOMap #-}
+{-# NOINLINE unsafeHoldIOMap #-}
+unsafeHoldIOMap :: EvStream t (HoldIO t a) -> EvStream t a
+unsafeHoldIOMap = unsafePerformIO . unsafeHoldIOSequence
+
+unsafeIOSequence :: EvStream t (IO a) -> IO (EvStream t a)
+unsafeIOSequence = unsafeHoldIOSequence . fmap liftIO
+
 unsafeIOMap :: EvStream t (IO a) -> EvStream t a
-unsafeIOMap = unsafePerformIO . unsafeIOSequence
+unsafeIOMap = unsafeHoldIOMap . fmap liftIO
 
 unsafePlan :: EvStream t (IO a) -> Hold t (EvStream t a)
-unsafePlan evs = do
+unsafePlan evs = Hold $ do
   plans <- liftIO $ unsafeIOSequence evs
   tell $ Pushes $ return () <$ plans
   return plans
@@ -202,12 +219,12 @@ memoB (BConst x) = BConst x
 memoB b = unsafePerformIO $ do
   ref <- newIORef Nothing
 
-  return $ Behavior $ do
+  return $ Behavior $ Hold $ do
     mtv <- liftIO $ readIORef ref
     curTime <- ask
 
     let reRun = do
-          (BehaviorInfo v sFuture sct, p) <- listen $ runB b
+          (BehaviorInfo v sFuture sct, p) <- listen . unHold $ runB b
           let memoFuture = memoSample sFuture
           liftIO $ writeIORef ref (Just (curTime, v, memoFuture, sct, p))
           return $ BehaviorInfo v memoFuture sct
@@ -246,7 +263,7 @@ instance Monad (Behavior t) where
           case futureA of
             NotFired -> sFutureB
             FiredNow a' pa' -> do
-              (BehaviorInfo b' sFutureB' sta, pb') <- runWriterT (runB $ f a')
+              (BehaviorInfo b' sFutureB' sta, pb') <- runWriterT . unHold $ runB $ f a'
               futureB' <- sFutureB'
               case futureB' of
                 NotFired -> return NotFired
@@ -261,8 +278,8 @@ sample :: Behavior t a -> Hold t a
 sample = fmap currentVal . runB
 
 sampleAfter :: Behavior t a -> Hold t a
-sampleAfter b = do
-  (BehaviorInfo a sfa _, p) <- lift $ runWriterT $ runB b
+sampleAfter b = Hold $ do
+  (BehaviorInfo a sfa _, p) <- lift $ runWriterT . unHold $ runB b
   fa <- lift sfa
   case fa of
     NotFired -> tell p >> return a
@@ -271,7 +288,7 @@ sampleAfter b = do
 changes :: Behavior t a -> EvStream t a
 changes (BConst _) = never
 changes b = EvStream $ do
-  (BehaviorInfo _ sfa _, _) <- runWriterT $ runB b
+  (BehaviorInfo _ sfa _, _) <- runWriterT . unHold $ runB b
   sfa
 
 newChangeTime :: IO (Sample t (Maybe Time), Time -> IO ())
@@ -289,7 +306,7 @@ newChangeTime = do
 
 holdEs :: EvStream t a -> a -> Hold t (Behavior t a)
 holdEs Never iv = return (return iv)
-holdEs evs iv = do
+holdEs evs iv = Hold $ do
   startTime <- ask
 
   (oTime, trigger) <- liftIO newChangeTime
@@ -306,18 +323,18 @@ holdEs evs iv = do
           Never -> return NotFired
           (EvStream effs) -> effs
 
-  (EvStream mToPush) <- liftIO $ unsafeIOSequence $ pull $ flip fmap (unPushes evs) $ \(a, p) -> do
+  (EvStream mToPush) <- liftIO $ fmap catMabyeEs $ unsafeHoldIOSequence $ flip fmap (unPushes evs) $ \(a, p) -> HoldIO $ do
                                 t <- ask
                                 if startTime == t
                                 then return Nothing
-                                else return $ Just $ do
-                                  (newCT, trigger) <- newChangeTime
-                                  return (t, a, p, newCT, trigger)
+                                else do
+                                  (newCT, trigger) <- liftIO newChangeTime
+                                  return $ Just (t, a, p, newCT, trigger)
 
   tell $ Pushes $ (\(t, a, p, ct, trigger) -> pushAction t a p ct trigger) <$> EvStream mToPush
   tell subPushes
 
-  return $ Behavior $ do
+  return $ Behavior $ Hold $ do
     (v, effects, sct, _) <- liftIO $ readIORef ref
     tell effects
     let sFuture = fmap (fmap (\(_,v,_,_,_) -> v)) mToPush
@@ -326,7 +343,7 @@ holdEs evs iv = do
 switch :: Behavior t (EvStream t a) -> EvStream t a
 switch (BConst evs) = evs
 switch bevs = EvStream $ do
-  (BehaviorInfo (EvStream me) _ _, _) <- runWriterT (runB bevs)
+  (BehaviorInfo (EvStream me) _ _, _) <- runWriterT . unHold $ runB bevs
   me
 
 newtype Plans t = Plans (EvStream t ())
@@ -336,19 +353,19 @@ instance Monoid (Plans t) where
   mappend (Plans el) (Plans er) = Plans $ mergefEs (<>) el er
 
 data Env = Env { clock :: IO Time, scheduleRound :: IO () }
-type PlanHold t = WriterT (Plans t, Pushes t) (ReaderT Env IO)
+newtype PlanHold t a = PlanHold { unPlanHold :: WriterT (Plans t, Pushes t) (ReaderT Env IO) a } deriving (Functor, Applicative, Monad, MonadFix, MonadIO)
 
-liftHold :: Hold t a -> PlanHold t a
-liftHold h = do
-  iot <- asks clock
-  t <- liftIO iot
-  (a, p) <- liftIO $ runReaderT (runWriterT h) t
-  tell (mempty, p)
-  return a
+instance MonadHold PlanHold t where
+  liftHold (Hold h) = PlanHold $ do
+    iot <- asks clock
+    t <- liftIO iot
+    (a, p) <- liftIO $ runReaderT (runWriterT h) t
+    tell (mempty, p)
+    return a
 
 planEs :: EvStream t (IO a) -> PlanHold t (EvStream t a)
 planEs Never = return Never
-planEs evs = do
+planEs evs = PlanHold $ do
   plans <- liftIO $ unsafeIOSequence evs
 
   tell (Plans $ void plans, mempty)

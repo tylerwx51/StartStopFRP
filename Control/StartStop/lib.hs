@@ -7,6 +7,9 @@ import Control.Monad.Writer.Strict
 
 import Data.IORef
 
+pull :: EvStream t (Hold t (Maybe a)) -> EvStream t a
+pull = catMabyeEs . startOnFire
+
 pullAlways :: EvStream t (Hold t a) -> EvStream t a
 pullAlways = pull . fmap (fmap Just)
 
@@ -182,13 +185,13 @@ test11 = do
 
 testHold :: (Show a) => Integer -> Hold t (Behavior t a) -> IO ()
 testHold numRounds hb = do
-  (b, Pushes pushes) <- runReaderT (runWriterT hb) (T 0)
+  (b, Pushes pushes) <- runReaderT (runWriterT . unHold $ hb) (T 0)
   loop 0 pushes b
   where
     loop :: (Show a) => Integer -> EvStream t (IO ()) -> Behavior t a -> IO ()
     loop i (EvStream mPush) b = when (i < numRounds) $ do
 
-      (v, _) <- runReaderT (runWriterT $ sample b) (T i)
+      (v, _) <- runReaderT (runWriterT . unHold $ sample b) (T i)
       liftIO $ print (i, v)
 
       didPush <- runReaderT mPush (T i)
@@ -215,10 +218,9 @@ test12 evs = do
 initPlanHold :: (IO () -> IO ()) -> PlanHold t () -> IO ()
 initPlanHold scheduleAction ph = do
   clockRef <- newIORef (T 0)
-  scheduleRef <- newIORef 0
 
   rec
-    let env = Env (readIORef clockRef) (modifyIORef scheduleRef (+1) >> scheduleAction loop)
+    let env = Env (readIORef clockRef) (scheduleAction loop)
 
         planSample = case planEvs of
                         Never -> return NotFired
@@ -237,8 +239,7 @@ initPlanHold scheduleAction ph = do
             FiredNow ioaction _ -> ioaction
 
           modifyIORef clockRef (\(T i) -> T $ i + 1)
-          modifyIORef scheduleRef (subtract 1)
 
-    ((), (Plans planEvs, Pushes pushesEv)) <- runReaderT (runWriterT ph) env
+    ((), (Plans planEvs, Pushes pushesEv)) <- runReaderT (runWriterT . unPlanHold $ ph) env
 
   return ()
