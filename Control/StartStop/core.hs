@@ -8,7 +8,6 @@ import Control.Monad.Writer.Strict
 import Data.IORef
 
 import System.IO.Unsafe
-import Unsafe.Coerce
 
 {--
 -- EvStream a = Time -> Maybe a

@@ -58,8 +58,8 @@ foldEs f es iv = do
 foldEs' :: (a -> b -> a) -> EvStream t b -> a -> Hold t (Behavior t a)
 foldEs' f es iv = do
   rec
-    let ups = f <$> b <@> es
-    b <- holdEs (forceEval ups) iv
+    let ups = (\va vb -> seq vb (f va vb)) <$> b <@> es
+    b <- holdEs ups iv
   return b
 
 switchEs :: EvStream t a -> EvStream t (EvStream t a) -> Hold t (EvStream t a)
