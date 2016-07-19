@@ -131,9 +131,18 @@ instance Functor (EvStream t) where
   fmap _ Never = Never
   fmap f (EvStream evs) = memoEvs $ EvStream $ fmap (fmap f) evs
 
+{--
+-- never is an EvStream that never fires.
+--}
 never :: EvStream t a
 never = Never
 
+{--
+-- "mergefEs f es1 es2" is an EvStream that fires when either e1 or e2
+-- fires. If e1 and e2 fire at the same time, let v1 be the value of the event
+-- fired by e1, and v2 be the value of the event fired by e2. Then "mergefEs f es1 es2"
+-- fires with a value of "f v1 v2"
+--}
 mergefEs :: (a -> a -> a) -> EvStream t a -> EvStream t a -> EvStream t a
 mergefEs _ Never e = e
 mergefEs _ e Never = e
@@ -146,6 +155,9 @@ mergefEs f (EvStream mel) (EvStream mer) = memoEvs $ EvStream $ do
     (NotFired, FiredNow r p) -> return $ FiredNow r p
     (FiredNow _ _, FiredNow _ _) -> return $ liftA2 f el er
 
+{--
+-- "startOnFire ev" when an event fires the hold will be started.
+--}
 startOnFire :: EvStream t (Hold t a) -> EvStream t a
 startOnFire Never = Never
 startOnFire (EvStream me) = memoEvs $ EvStream $ do
