@@ -7,6 +7,7 @@ import Control.Monad.Writer.Strict
 {- Typeclass hack for efficiency. I feel like this should be something
 -  that can be compiler can check but I don't know how. This typeclass allows for more
 -  efficient samples and allows for removing unecissary side effects of events.
+-  This feels a little hackish as well.
 -}
 class BehaviorBased a where
   behaviorBased :: a -> Bool

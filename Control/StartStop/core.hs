@@ -33,10 +33,45 @@ instance Monoid (Pushes t) where
   mempty = Pushes never
   mappend (Pushes el) (Pushes er) = Pushes $ mergefEs (>>) el er
 
+{-
+- Sample t a : is semantically a (Time -> a)
+- Sample t a may perform IO however, the following statement must be true:
+- given sample and t, do
+    a <- runReaderT sample t
+    ...
+    b <- runReaderT sample t
+    then a = b must always be true no matter what happend was called during the ...
+- Rougly if you run the sample, it is garrented to return the same value if you call it more than once.
+- The IO is specificly used for several performance reasons (memoization and in holdEs).
+-}
 type Sample t = ReaderT Time IO
+
+{-
+- Hold t a : is semantically (Time -> (a, Pushes))
+- Hold is simalar to a sample, but now we also have the ability to start
+- holding, the Pushes are what pushes are neccisary to make the current values
+- work. Similar to sample, IO may be performed but an reOccuring runHolds must
+- return the same value.
+-
+- TODO: I believe that it is possible to reduce the work for duplicate holds, like in
+-       the following examples:
+-        expamle1 : do
+              holdEs ev 1
+              holdEs ev 2
+
+         example2 : do
+              holdEs ev 1
+              let ev2 <- pullAlways $ fmap (\_ -> holdEs ev 5) ev
+              holdEs ev2 (return (negate 1))
+-
+-       I however, need to look into how far I can push this and how it will
+-       effect performance.
+-}
 newtype Hold t a = Hold { unHold :: WriterT (Pushes t) (Sample t) a } deriving (Functor, Applicative, Monad, MonadFix)
+{- Like Hold but may also produce IO effects. No longer garrentes that reruns return the same vale -}
 newtype HoldIO t a = HoldIO { unHoldIO :: WriterT (Pushes t) (Sample t) a } deriving (Functor, Applicative, Monad, MonadFix, MonadIO)
 
+{- lifting hold, similar to liftIO. -}
 class (Monad (m t)) => MonadHold m t where
   liftHold :: Hold t a -> m t a
 
