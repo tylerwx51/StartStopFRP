@@ -14,12 +14,26 @@
   (major1) == 4 && (major2) <  8 || \
   (major1) == 4 && (major2) == 8 && (minor) <= 2)
 
+/* package gloss-1.10.1.1 */
+#define VERSION_gloss "1.10.1.1"
+#define MIN_VERSION_gloss(major1,major2,minor) (\
+  (major1) <  1 || \
+  (major1) == 1 && (major2) <  10 || \
+  (major1) == 1 && (major2) == 10 && (minor) <= 1)
+
 /* package mtl-2.2.1 */
 #define VERSION_mtl "2.2.1"
 #define MIN_VERSION_mtl(major1,major2,minor) (\
   (major1) <  2 || \
   (major1) == 2 && (major2) <  2 || \
   (major1) == 2 && (major2) == 2 && (minor) <= 1)
+
+/* package transformers-0.4.2.0 */
+#define VERSION_transformers "0.4.2.0"
+#define MIN_VERSION_transformers(major1,major2,minor) (\
+  (major1) <  0 || \
+  (major1) == 0 && (major2) <  4 || \
+  (major1) == 0 && (major2) == 4 && (minor) <= 2)
 
 /* tool alex-3.1.4 */
 #define TOOL_VERSION_alex "3.1.4"
@@ -105,7 +119,7 @@
   (major1) == 0 && (major2) <  28 || \
   (major1) == 0 && (major2) == 28 && (minor) <= 0)
 
-#define CURRENT_COMPONENT_ID "StartStopFRP-0.1.0.0-2SMkMAbjFGdGjn4LXu6Bo7"
+#define CURRENT_COMPONENT_ID "StartStopFRP-0.1.0.0-67SKqh19SlXJWKQBdogcIy"
 
-#define CURRENT_PACKAGE_KEY "2SMkMAbjFGdGjn4LXu6Bo7"
+#define CURRENT_PACKAGE_KEY "67SKqh19SlXJWKQBdogcIy"
 

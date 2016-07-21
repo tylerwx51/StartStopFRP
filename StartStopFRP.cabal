@@ -48,7 +48,7 @@ cabal-version:       >=1.10
 
 library
   -- Modules exported by the library.
-  exposed-modules: Control.StartStop.Core, Control.StartStop.Lib, Control.StartStop.TestFun, Control.StartStop.EvPrim
+  exposed-modules: Control.StartStop.Core, Control.StartStop.Lib, Control.StartStop.TestFun, Control.StartStop.EvPrim, Control.StartStop.Gloss
 
   -- Modules included in this library but not exported.
   -- other-modules:
@@ -57,7 +57,7 @@ library
   -- other-extensions:
 
   -- Other library packages from which modules are imported.
-  build-depends:       base >=4.8 && <4.9, mtl
+  build-depends:       base >=4.8 && <4.9, mtl, transformers, gloss
 
   -- Directories containing source files.
   hs-source-dirs:

@@ -26,6 +26,7 @@ testPlanHold n = do
         trigger (i + 1)
 
         actions <- readIORef actionsRef
+        writeIORef actionsRef []
         sequence_ actions
 
         s <- readIORef sampleRef
