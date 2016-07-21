@@ -13,6 +13,12 @@ pull = catMabyeEs . startOnFire
 pullAlways :: EvStream t (Hold t a) -> EvStream t a
 pullAlways = pull . fmap (fmap Just)
 
+mergefpEs :: (PushOnly t a -> PushOnly t a -> PushOnly t a) -> EvStream t a -> EvStream t a -> EvStream t a
+mergefpEs f el er = pushes $ mergefEs f (unPushes el) (unPushes er)
+
+leftmost :: EvStream t a -> EvStream t a -> EvStream t a
+leftmost = mergefpEs const
+
 filterMapEs :: (a -> Maybe b) -> EvStream t a -> EvStream t b
 filterMapEs f = pull . fmap (return . f)
 

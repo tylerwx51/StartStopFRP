@@ -228,13 +228,30 @@ unsafePlan evs = Hold $ do
   tell $ Pushes $ return () <$ plans
   return plans
 
-unPushes :: EvStream t a -> EvStream t (a, Pushes t)
+{- unPushes and pushes are useful for slight improvements to efficency
+   allows for things leftmost to not need the pushes of the unused value.
+-}
+type PushOnly t = Writer (Pushes t)
+unPushes :: EvStream t a -> EvStream t (PushOnly t a)
 unPushes Never = Never
 unPushes (EvStream em) = EvStream $ do
   eInfo <- em
   case eInfo of
     NotFired -> return NotFired
-    FiredNow a p -> return $ FiredNow (a, p) p
+    FiredNow a p -> return $ FiredNow (tell p >> return a) mempty
+
+pushes :: EvStream t (PushOnly t a) -> EvStream t a
+pushes Never = Never
+pushes (EvStream em) = EvStream $ do
+  eInfo <- em
+  case eInfo of
+    NotFired -> return NotFired
+    FiredNow w p2 -> do
+      let (v, p1) = runWriter w
+      return $ FiredNow v (p1 <> p2)
+
+listenPushes :: EvStream t a -> EvStream t (a, Pushes t)
+listenPushes = pushes . fmap listen . unPushes
 
 data BehaviorInfo t a = BehaviorInfo { currentVal :: a
                                      , futureInfo :: Sample t (EvInfo t a)
@@ -369,7 +386,7 @@ holdEs evs iv = Hold $ do
           Never -> return NotFired
           (EvStream effs) -> effs
 
-  (EvStream mToPush) <- liftIO $ fmap catMabyeEs $ unsafeHoldIOSequence $ flip fmap (unPushes evs) $ \(a, p) -> HoldIO $ do
+  (EvStream mToPush) <- liftIO $ fmap catMabyeEs $ unsafeHoldIOSequence $ flip fmap (listenPushes evs) $ \(a, p) -> HoldIO $ do
                                 t <- ask
                                 if startTime == t
                                 then return Nothing
