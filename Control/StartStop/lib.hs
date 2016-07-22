@@ -1,4 +1,4 @@
-{-# LANGUAGE RecursiveDo #-}
+{-# LANGUAGE RecursiveDo, DoAndIfThenElse #-}
 module Control.StartStop.Lib where
 
 import Control.StartStop.Core
@@ -207,6 +207,31 @@ testHold numRounds hb = do
         FiredNow ioAction _ -> do
           ioAction
           loop (i + 1) (EvStream mPush) b
+
+holdProgressive :: Hold t (Behavior t a) -> IO (IO a)
+holdProgressive hb = do
+  clockRef <- newIORef (T 0)
+
+  rec
+    let pushesSample = case pushesEv of
+                          Never -> return NotFired
+                          EvStream me -> me
+
+        next = do
+          t <- readIORef clockRef
+          eioaction <- runReaderT pushesSample t
+          case eioaction of
+            NotFired -> return ()
+            FiredNow ioaction _ -> ioaction
+
+          (bInfo, _) <- runReaderT (runWriterT $ unHold $ runB b) t
+
+          modifyIORef clockRef (\(T i) -> T $ i + 1)
+          return $ currentVal bInfo
+
+    (b, Pushes pushesEv) <- runReaderT (runWriterT . unHold $ hb) (T 0)
+
+  return next
 
 test5 :: PlanHold t (Behavior t String)
 test5 = do
