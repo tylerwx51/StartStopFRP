@@ -326,10 +326,10 @@ instance Monad (Behavior t) where
           case futureA of
             NotFired -> sFutureB
             FiredNow a' pa' -> do
-              (BehaviorInfo b' sFutureB' sta, pb') <- runWriterT . unHold $ runB $ f a'
+              (BehaviorInfo b' sFutureB' stb', pb') <- runWriterT . unHold $ runB $ f a'
               futureB' <- sFutureB'
               case futureB' of
-                NotFired -> return NotFired
+                NotFired -> return $ FiredNow b' (pa' <> pb')
                 FiredNow fb' pfb' -> return $ FiredNow fb' (pa' <> pb' <> pfb')
 
     return $ BehaviorInfo b sFutureF (firstTime sta stb)
