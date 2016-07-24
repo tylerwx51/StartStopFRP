@@ -48,16 +48,19 @@ cabal-version:       >=1.10
 
 library
   -- Modules exported by the library.
-  exposed-modules: Control.StartStop.Core, Control.StartStop.Lib, Control.StartStop.TestFun, Control.StartStop.EvPrim, Control.StartStop.Gloss
+  exposed-modules: Control.StartStop.Core, Control.StartStop.Lib, Control.StartStop.TestFun, Control.StartStop.EvPrim, Control.StartStop.Gloss, Control.StartStop.Chart
 
   -- Modules included in this library but not exported.
   -- other-modules:
 
   -- LANGUAGE extensions used by modules in this package.
-  other-extensions: DoAndIfThenElse
+  other-extensions:
 
   -- Other library packages from which modules are imported.
-  build-depends:       base >=4.8 && <4.9, mtl, transformers, gloss > 1.10
+  build-depends:       base >=4.8 && <4.9
+                      , mtl, transformers
+                      , gloss > 1.10
+                      , Chart, Chart-cairo
 
   -- Directories containing source files.
   hs-source-dirs:

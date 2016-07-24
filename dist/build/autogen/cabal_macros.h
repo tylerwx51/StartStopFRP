@@ -7,6 +7,20 @@
   (major1) == 0 && (major2) <  1 || \
   (major1) == 0 && (major2) == 1 && (minor) <= 0)
 
+/* package Chart-1.8 */
+#define VERSION_Chart "1.8"
+#define MIN_VERSION_Chart(major1,major2,minor) (\
+  (major1) <  1 || \
+  (major1) == 1 && (major2) <  8 || \
+  (major1) == 1 && (major2) == 8 && (minor) <= 0)
+
+/* package Chart-cairo-1.8 */
+#define VERSION_Chart_cairo "1.8"
+#define MIN_VERSION_Chart_cairo(major1,major2,minor) (\
+  (major1) <  1 || \
+  (major1) == 1 && (major2) <  8 || \
+  (major1) == 1 && (major2) == 8 && (minor) <= 0)
+
 /* package base-4.8.2.0 */
 #define VERSION_base "4.8.2.0"
 #define MIN_VERSION_base(major1,major2,minor) (\
@@ -119,7 +133,7 @@
   (major1) == 0 && (major2) <  28 || \
   (major1) == 0 && (major2) == 28 && (minor) <= 0)
 
-#define CURRENT_COMPONENT_ID "StartStopFRP-0.1.0.0-67SKqh19SlXJWKQBdogcIy"
+#define CURRENT_COMPONENT_ID "StartStopFRP-0.1.0.0-8qPOHQWYSei57I9xLGb7cz"
 
-#define CURRENT_PACKAGE_KEY "67SKqh19SlXJWKQBdogcIy"
+#define CURRENT_PACKAGE_KEY "8qPOHQWYSei57I9xLGb7cz"
 
