@@ -35,6 +35,13 @@
   (major1) == 1 && (major2) <  10 || \
   (major1) == 1 && (major2) == 10 && (minor) <= 1)
 
+/* package gloss-algorithms-1.10.1.1 */
+#define VERSION_gloss_algorithms "1.10.1.1"
+#define MIN_VERSION_gloss_algorithms(major1,major2,minor) (\
+  (major1) <  1 || \
+  (major1) == 1 && (major2) <  10 || \
+  (major1) == 1 && (major2) == 10 && (minor) <= 1)
+
 /* package mtl-2.2.1 */
 #define VERSION_mtl "2.2.1"
 #define MIN_VERSION_mtl(major1,major2,minor) (\
@@ -133,7 +140,7 @@
   (major1) == 0 && (major2) <  28 || \
   (major1) == 0 && (major2) == 28 && (minor) <= 0)
 
-#define CURRENT_COMPONENT_ID "StartStopFRP-0.1.0.0-8qPOHQWYSei57I9xLGb7cz"
+#define CURRENT_COMPONENT_ID "StartStopFRP-0.1.0.0-IloBXAXJqwGDHn21R65BpM"
 
-#define CURRENT_PACKAGE_KEY "8qPOHQWYSei57I9xLGb7cz"
+#define CURRENT_PACKAGE_KEY "IloBXAXJqwGDHn21R65BpM"
 

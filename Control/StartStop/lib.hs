@@ -41,13 +41,15 @@ filterMapEs :: (a -> Maybe b) -> EvStream t a -> EvStream t b
 filterMapEs f = pull . fmap (return . f)
 
 {-
-
+- Removes any values that when p is applied to the value of the event is False.
 -}
 filterEs :: (a -> Bool) -> EvStream t a -> EvStream t a
 filterEs p = filterMapEs boolToJust
   where
     boolToJust v = if p v then Just v else Nothing
 
+
+{- If two events fire at the same exact time apply ef to ea-}
 data EitherBoth a b = EBLeft a | EBRight b | EBBoth a b
 applyEs :: EvStream t (a -> b) -> EvStream t a -> EvStream t b
 applyEs ef ea = filterMapEs (\e -> case e of
@@ -72,9 +74,6 @@ b <@> es = pull $ flip fmap es $ \a -> do
   f <- sample b
   return $ Just $ f a
 
-forceEval :: EvStream t a -> EvStream t a
-forceEval = unsafeIOMap . fmap (\x -> return $! x)
-
 foldEs :: (a -> b -> a) -> EvStream t b -> a -> Hold t (Behavior t a)
 foldEs f es iv = do
   rec
@@ -98,3 +97,6 @@ switcher :: Behavior t a -> EvStream t (Behavior t a) -> Hold t (Behavior t a)
 switcher iv es = do
   bb <- holdEs es iv
   return $ join bb
+
+toggle :: EvStream t x -> Bool -> Hold t (Behavior t Bool)
+toggle = foldEs' (\v _ -> not v)
