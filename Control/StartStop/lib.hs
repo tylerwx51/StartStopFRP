@@ -100,3 +100,9 @@ switcher iv es = do
 
 toggle :: EvStream t x -> Bool -> Hold t (Behavior t Bool)
 toggle = foldEs' (\v _ -> not v)
+
+count :: (Integral a) => EvStream t x -> Hold t (Behavior t a)
+count e = foldEs' (\v _ -> v + 1) e 0
+
+debugIO :: EvStream t (IO ()) -> Hold t ()
+debugIO = void . unsafePlan

@@ -27,10 +27,11 @@ main = runGlossHoldIO (InWindow "FRP-Zoo" (500,500) (10, 10)) white 10 $ \time e
   count5 <- count $ gate mode5 click5
   count10 <- count click10
 
-  let toggleDyn False = return $ return 0
-      toggleDyn True = count click0
+  {- senario 0 -}
+  let toggleDyn0 False = return $ return 0
+      toggleDyn0 True = count click0
 
-      dToggle0 = startOnFire $ toggleDyn <$> changes mode0
+      dToggle0 = startOnFire $ toggleDyn0 <$> changes mode0
 
   dCount0 <- switcher count0 dToggle0
 

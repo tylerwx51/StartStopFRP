@@ -7,6 +7,7 @@ import Control.StartStop.EvPrim
 import Control.Monad.Reader
 import Control.Monad.Writer.Strict
 import Data.IORef
+import Data.Maybe
 
 main = testHold 100000 test10
 
@@ -36,6 +37,51 @@ testPlanHold n eHold = do
         unless (i > n) $ loop (i + 1)
 
   loop 0
+
+type TestEvStream a = [(Time, a)]
+type TestBehavior a = Time -> a
+type TestHold a = Time -> a
+
+testEvSearch :: Time -> TestEvStream a -> Maybe a
+testEvSearch _ [] = Nothing
+testEvSearch t ((t',v):vs)
+  | t < t' = Nothing
+  | t == t' = Just v
+  | t > t' = testEvSearch t vs
+
+lastFired :: Time -> TestEvStream a -> Maybe (Time, a)
+lastFired t = impl Nothing
+  where
+    impl miv [] = miv
+    impl miv ((t',v):vs)
+      | t <= t' = miv
+      | t > t' = impl (Just (t', v)) vs
+
+testSwitch :: TestBehavior (TestEvStream a) -> TestEvStream a
+testSwitch b = catMaybes $ fmap (\(t,m) -> fmap (\v -> (t,v)) m) $ do
+  t <- fmap T [0..]
+  let currentEv = b t
+  return (t, testEvSearch t currentEv)
+
+holdTest :: TestEvStream a -> a -> TestHold (TestBehavior a)
+holdTest evs iv startTime = \t -> case lastFired t evs of
+                                    Just (t',v)
+                                      | startTime < t' -> v
+                                    _ -> iv
+
+testMergef :: (a -> a -> a) -> TestEvStream a -> TestEvStream a -> TestEvStream a
+testMergef _ [] er = er
+testMergef _ el [] = el
+testMergef f ((tl,vl):vls) ((tr,vr):vrs)
+  | tl == tr = (tl, f vl vr) : testMergef f vls vrs
+  | tl < tr = (tl, vl) : testMergef f vls ((tr,vr):vrs)
+  | tl > tr = (tr, vr) : testMergef f ((tl,vl):vls) vrs
+
+startOnFireTest :: TestEvStream (TestHold a) -> TestEvStream a
+startOnFireTest ((t,hv):vs) = (t, hv t) : startOnFireTest vs
+
+testSample :: TestBehavior a -> TestHold a
+testSample = id
 
 testEv :: [(Time, a)] -> Hold t (EvStream t a)
 testEv = return . EvStream . impl
