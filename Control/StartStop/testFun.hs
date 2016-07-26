@@ -38,30 +38,30 @@ testPlanHold n eHold = do
 
   loop 0
 
-type TestEvStream a = [(Time, a)]
+type TestEvStream a = Time -> Maybe a
 type TestBehavior a = Time -> a
 type TestHold a = Time -> a
 
-testEvSearch :: Time -> TestEvStream a -> Maybe a
-testEvSearch _ [] = Nothing
-testEvSearch t ((t',v):vs)
-  | t < t' = Nothing
-  | t == t' = Just v
-  | t > t' = testEvSearch t vs
+listEvs :: Integer -> TestEvStream a -> [(Time, a)]
+listEvs maxTime ev = catMaybes $ do
+  t <- fmap T [0..maxTime]
+  let mv = ev t
+  return $ (\v -> (t, v)) <$> mv
+
+listToEv :: [(Time, a)] -> TestEvStream a
+listToEv vs t = lookup t vs
 
 lastFired :: Time -> TestEvStream a -> Maybe (Time, a)
-lastFired t = impl Nothing
-  where
-    impl miv [] = miv
-    impl miv ((t',v):vs)
-      | t <= t' = miv
-      | t > t' = impl (Just (t', v)) vs
+lastFired (T (-1)) _ = Nothing
+lastFired t@(T i) ev = case ev t of
+                  Nothing -> lastFired (T (i - 1)) ev
+                  Just v -> Just (t, v)
+
+neverTest :: TestEvStream a
+neverTest _ = Nothing
 
 testSwitch :: TestBehavior (TestEvStream a) -> TestEvStream a
-testSwitch b = catMaybes $ fmap (\(t,m) -> fmap (\v -> (t,v)) m) $ do
-  t <- fmap T [0..]
-  let currentEv = b t
-  return (t, testEvSearch t currentEv)
+testSwitch b = \t -> b t t
 
 holdTest :: TestEvStream a -> a -> TestHold (TestBehavior a)
 holdTest evs iv startTime = \t -> case lastFired t evs of
@@ -70,15 +70,14 @@ holdTest evs iv startTime = \t -> case lastFired t evs of
                                     _ -> iv
 
 testMergef :: (a -> a -> a) -> TestEvStream a -> TestEvStream a -> TestEvStream a
-testMergef _ [] er = er
-testMergef _ el [] = el
-testMergef f ((tl,vl):vls) ((tr,vr):vrs)
-  | tl == tr = (tl, f vl vr) : testMergef f vls vrs
-  | tl < tr = (tl, vl) : testMergef f vls ((tr,vr):vrs)
-  | tl > tr = (tr, vr) : testMergef f ((tl,vl):vls) vrs
+testMergef f el er t = case (el t, er t) of
+  (Just l, Nothing) -> Just l
+  (Nothing, Just r) -> Just r
+  (Just l, Just r) -> Just $ f l r
+  (Nothing, Nothing) -> Nothing
 
 startOnFireTest :: TestEvStream (TestHold a) -> TestEvStream a
-startOnFireTest ((t,hv):vs) = (t, hv t) : startOnFireTest vs
+startOnFireTest ev t = fmap ($ t) (ev t)
 
 testSample :: TestBehavior a -> TestHold a
 testSample = id
