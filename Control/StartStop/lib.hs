@@ -1,4 +1,4 @@
- {-# LANGUAGE RecursiveDo, DoAndIfThenElse #-}
+ {-# LANGUAGE RecursiveDo, DoAndIfThenElse, TypeFamilies, FlexibleContexts, ExistentialQuantification, GeneralizedNewtypeDeriving #-}
 module Control.StartStop.Lib where
 
 import Control.StartStop.Core
@@ -7,6 +7,47 @@ import Control.Monad.Writer.Strict
 
 import Data.IORef
 
+{-
+class (MonadFix (Behavior t), Functor (EvStream t), MonadFix (Hold t), Monad (PushOnly t)) => StartStopFRP t where
+  data Behavior t :: * -> *
+  data EvStream t :: * -> *
+  data Hold t :: * -> *
+  data PushOnly t :: * -> *
+
+  never :: EvStream t a
+  catMabyeEs :: EvStream t (Maybe a) -> EvStream t a
+  startOnFire :: EvStream t (Hold t a) -> EvStream t a
+  mergefEs :: (a -> a -> a) -> EvStream t a -> EvStream t a -> EvStream t a
+  coincidence :: EvStream t (EvStream t a) -> EvStream t a
+  switch :: Behavior t (EvStream t a) -> EvStream t a
+  holdEs :: EvStream t a -> a -> Hold t (Behavior t a)
+  unPushes :: EvStream t a -> EvStream t (PushOnly t a)
+  pushes :: EvStream t (PushOnly t a) -> EvStream t a
+  sample :: Behavior t a -> Hold t a
+  sampleAfter :: Behavior t a -> Hold t a
+  changes :: Behavior t a -> EvStream t a
+  unsafePlan :: EvStream t (IO a) -> Hold t (EvStream t a)
+
+instance StartStopFRP (Core.StartStop t) where
+  newtype Behavior (Core.StartStop t) a = Behavior { unB :: Core.Behavior t a } deriving(Functor, Applicative, Monad, MonadFix)
+  newtype EvStream (Core.StartStop t) a = EvStream { unEv :: Core.EvStream t a } deriving(Functor)
+  newtype Hold (Core.StartStop t) a = Hold { unH :: Core.Hold t a } deriving (Functor, Applicative, Monad, MonadFix)
+  newtype PushOnly (Core.StartStop t) a = PushOnly { unP :: Core.PushOnly t a } deriving (Functor, Applicative, Monad)
+
+  never = EvStream Core.never
+  catMabyeEs = EvStream . Core.catMabyeEs . unEv
+  startOnFire = EvStream . Core.startOnFire . fmap unH . unEv
+  mergefEs f el er = EvStream $ Core.mergefEs f (unEv el) (unEv er)
+  coincidence = EvStream . Core.coincidence . unEv . fmap unEv
+  switch = EvStream . Core.switch . unB . fmap unEv
+  holdEs e iv = fmap Behavior . Hold $ Core.holdEs (unEv e) iv
+  unPushes = EvStream . fmap PushOnly . Core.unPushes . unEv
+  pushes = EvStream . Core.pushes . fmap unP . unEv
+  sample = Hold . Core.sample . unB
+  sampleAfter = Hold . Core.sampleAfter . unB
+  changes = EvStream . Core.changes . unB
+  unsafePlan = fmap EvStream . Hold . Core.unsafePlan . unEv
+-}
 {- Starts the given hold, if its returned value is not Nothing. This is
    equivalent to "catMabyeEs . startOnFire".
 -}

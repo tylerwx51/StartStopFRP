@@ -2,7 +2,7 @@ module Control.StartStop.Chart where
 
 import Control.StartStop.Core
 import Control.StartStop.Lib
-import Control.StartStop.TestFun
+import Control.StartStop.RunHold
 
 import Control.Monad.IO.Class
 

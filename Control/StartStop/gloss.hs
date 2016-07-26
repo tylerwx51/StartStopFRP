@@ -3,7 +3,7 @@ module Control.StartStop.Gloss where
 import Control.StartStop.Core
 import Control.StartStop.Lib
 import Control.StartStop.EvPrim
-import Control.StartStop.TestFun
+import Control.StartStop.RunHold
 
 import Control.Monad.IO.Class
 

@@ -9,6 +9,7 @@ import Data.IORef
 
 import System.IO.Unsafe
 
+data StartStop t
 {--
 -- EvStream a = Time -> Maybe a
 -- Behavior a = Time -> a
