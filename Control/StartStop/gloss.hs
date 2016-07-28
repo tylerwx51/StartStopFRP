@@ -18,12 +18,12 @@ runGlossHoldIO displayMode bgColor fps bPicture = do
 
   timeTriggerRef <- newIORef undefined
   eventTriggerRef <- newIORef undefined
-  --renderTriggerRef <- newIORef undefined
+  renderTriggerRef <- newIORef undefined
 
   let pl = do
         (timeTrigger, clock) <- callbackStream
         (eventTrigger, events) <- callbackStream
-        (renderTrigger, renderEv) <- callbackStream
+        --(renderTrigger, renderEv) <- callbackStream
 
         liftIO $ writeIORef timeTriggerRef timeTrigger
         liftIO $ writeIORef eventTriggerRef eventTrigger
@@ -47,6 +47,6 @@ runGlossHoldIO displayMode bgColor fps bPicture = do
          bgColor
          fps
          ()
-         (\() -> readIORef pictureRef)
+         (\() -> readIORef pictureRef >>= \p -> return $! p)
          (\event _ -> readIORef eventTriggerRef >>= \t -> t event)
          (\time _ -> readIORef timeTriggerRef >>= \t -> t time >> runActions)

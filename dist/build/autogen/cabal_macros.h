@@ -140,7 +140,7 @@
   (major1) == 0 && (major2) <  28 || \
   (major1) == 0 && (major2) == 28 && (minor) <= 0)
 
-#define CURRENT_COMPONENT_ID "StartStopFRP-0.1.0.0-IloBXAXJqwGDHn21R65BpM"
+#define CURRENT_COMPONENT_ID "StartStopFRP-0.1.0.0-Ia6oHr27mfF8suoxVmfLPH"
 
-#define CURRENT_PACKAGE_KEY "IloBXAXJqwGDHn21R65BpM"
+#define CURRENT_PACKAGE_KEY "Ia6oHr27mfF8suoxVmfLPH"
 

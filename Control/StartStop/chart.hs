@@ -9,10 +9,10 @@ import Control.Monad.IO.Class
 import Graphics.Rendering.Chart.Easy
 import Graphics.Rendering.Chart.Backend.Cairo
 
-plotAtTime :: (ToRenderable a, Default a) => EvStream t x -> Behavior t (EC a ()) -> PlanHold t ()
-plotAtTime ePlot b = do
+plotAtTime :: (ToRenderable a, Default a) => FilePath -> EvStream t x -> Behavior t (EC a ()) -> PlanHold t ()
+plotAtTime path ePlot b = do
   let evs = snapshots b ePlot
-  planEs $ flip fmap evs $ \vs -> liftIO $ toFile def "test.png" vs
+  planEs $ flip fmap evs $ \vs -> liftIO $ toFile def path vs
 
   return ()
 
@@ -46,5 +46,13 @@ runTest = testPlanHold 101 $ \evs -> do
   b <- liftHold $ holdEs (fmap (\t -> sin (fromInteger t/10) :: Float) evs) 0
   time <- liftHold $ holdEs evs 0
   bPlot <- liftHold $ plotEvStream (fmap fromInteger time) (changes b)
-  plotAtTime (filterEs (==100) evs) bPlot
+  plotAtTime "test.png" (filterEs (==100) evs) bPlot
+  return $ return ""
+
+readMeExample1 :: IO ()
+readMeExample1 = testPlanHold 101 $ \evs -> do
+  b <- liftHold $ holdEs (fmap (\x -> x * x) evs) 0
+  time <- liftHold $ holdEs evs 0
+  bPlot <- liftHold $ smoothPlot (fmap fromInteger time) b
+  plotAtTime "Ex1.png" (filterEs (==100) evs) bPlot
   return $ return ""
