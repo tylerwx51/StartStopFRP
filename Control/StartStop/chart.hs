@@ -16,14 +16,14 @@ plotAtTime path ePlot b = do
 
   return ()
 
-smoothPlot :: Behavior t Integer -> Behavior t a -> Hold t (Behavior t (EC (Layout Integer a) ()))
+smoothPlot :: Behavior t a -> Behavior t b -> Hold t (Behavior t (EC (Layout a b) ()))
 smoothPlot time b = do
   v <- sample b
   t <- sample time
   bac <- foldEs' (flip (:)) (changes $ flip (,) <$> b <*> time) [(t,v)]
   return $ fmap (\vs -> plot $ line "Smooth Plot" [vs]) bac
 
-stepPlot :: Behavior t Float -> Behavior t a -> Hold t (Behavior t (EC (Layout Float a) ()))
+stepPlot :: Behavior t a -> Behavior t b -> Hold t (Behavior t (EC (Layout a b) ()))
 stepPlot time b = do
   let timeChanges = changes time
       hPoints t = do
@@ -53,6 +53,6 @@ readMeExample1 :: IO ()
 readMeExample1 = testPlanHold 101 $ \evs -> do
   b <- liftHold $ holdEs (fmap (\x -> x * x) evs) 0
   time <- liftHold $ holdEs evs 0
-  bPlot <- liftHold $ smoothPlot (fmap fromInteger time) b
+  bPlot <- liftHold $ smoothPlot time b
   plotAtTime "Ex1.png" (filterEs (==100) evs) bPlot
   return $ return ""

@@ -9,7 +9,6 @@ import Data.IORef
 
 import System.IO.Unsafe
 
-data StartStop t
 {--
 -- EvStream a = Time -> Maybe a
 -- Behavior a = Time -> a
@@ -75,6 +74,7 @@ newtype HoldIO t a = HoldIO { unHoldIO :: WriterT (Pushes t) (Sample t) a } deri
 {- lifting hold, similar to liftIO. -}
 class (Monad (m t)) => MonadHold m t where
   liftHold :: Hold t a -> m t a
+  sample :: m t a
 
 instance MonadHold HoldIO t where
   liftHold (Hold rw) = HoldIO rw
@@ -434,3 +434,6 @@ planEs evs = PlanHold $ do
 
   tell (Plans $ void plans, mempty)
   return plans
+
+class (Monad (m t)) => Sample m where
+  sample :: Behavior t a -> m t a
