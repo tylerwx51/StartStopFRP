@@ -1,4 +1,4 @@
-{-# LANGUAGE MultiParamTypeClasses, FlexibleInstances, GeneralizedNewtypeDeriving, DoAndIfThenElse #-}
+{-# LANGUAGE MultiParamTypeClasses, FlexibleInstances, GeneralizedNewtypeDeriving, DoAndIfThenElse, ScopedTypeVariables #-}
 module Control.StartStop.Core where
 
 import Control.Applicative
@@ -74,7 +74,7 @@ newtype HoldIO t a = HoldIO { unHoldIO :: WriterT (Pushes t) (Sample t) a } deri
 {- lifting hold, similar to liftIO. -}
 class (Monad (m t)) => MonadHold m t where
   liftHold :: Hold t a -> m t a
-  sample :: m t a
+  --sample :: m t a
 
 instance MonadHold HoldIO t where
   liftHold (Hold rw) = HoldIO rw
@@ -255,7 +255,7 @@ listenPushes :: EvStream t a -> EvStream t (a, Pushes t)
 listenPushes = pushes . fmap listen . unPushes
 
 data BehaviorInfo t a = BehaviorInfo { currentVal :: a
-                                     , futureInfo :: Sample t (EvInfo t a)
+                                     , futureInfo :: Sample t (EvInfo t (BehaviorInfo t a))
                                      , changeTime :: Sample t (Maybe Time)
                                      }
 
@@ -278,10 +278,11 @@ runB (BConst x) = return $ BehaviorInfo x (return NotFired) (return Nothing)
 runB (Behavior hbi) = hbi
 
 {-# NOINLINE memoB #-}
-memoB :: Behavior t a -> Behavior t a
+memoB :: forall t a . Behavior t a -> Behavior t a
 memoB (BConst x) = BConst x
 memoB b = unsafePerformIO $ do
-  ref <- newIORef Nothing
+  ref <- newIORef Nothing -- stores the value of right now
+  futureRef <- newIORef Nothing -- stores the value of the upper limit of now
 
   return $ Behavior $ Hold $ do
     mtv <- liftIO $ readIORef ref
@@ -289,30 +290,66 @@ memoB b = unsafePerformIO $ do
 
     let reRun = do
           (BehaviorInfo v sFuture sct, p) <- listen . unHold $ runB b
-          let memoFuture = memoSample sFuture
-          liftIO $ writeIORef ref (Just (curTime, v, memoFuture, sct, p))
-          return $ BehaviorInfo v memoFuture sct
+          let mf = memoFuture sFuture
+          liftIO $ writeIORef ref (Just (curTime, BehaviorInfo v mf sct, p))
+          return $ BehaviorInfo v mf sct
+
+        memoFuture :: Sample t (EvInfo t (BehaviorInfo t a)) -> Sample t (EvInfo t (BehaviorInfo t a))
+        memoFuture sFuture = do
+          curTime <- ask
+          mtv <- liftIO $ readIORef futureRef
+          case mtv of
+            Just (t, bInfo, p)
+              | t == curTime -> return $ FiredNow bInfo p
+            _ -> do
+              evFuture <- sFuture
+              case evFuture of
+                NotFired -> return NotFired
+                FiredNow bInfo' p' -> do
+                  liftIO $ writeIORef futureRef $ Just (curTime, bInfo', p')
+                  return $ FiredNow bInfo' p'
+
+        checkFutureRefValid = do
+          mtfuture <- liftIO $ readIORef futureRef
+          case mtfuture of
+            Nothing -> reRun
+            Just (tf', bInfo', p')
+              | tf' /= curTime -> do
+                ct' <- lift $ changeTime bInfo'
+                case ct' of
+                  Just ft'
+                    | ft' < curTime -> reRun
+                  _ -> do
+                    liftIO $ writeIORef ref $ Just (curTime, bInfo', p')
+                    tell p'
+                    return bInfo'
 
     case mtv of
-      Just (t, v, sFuture, sct, p) -> do
-        ct <- lift sct
-        case ct of
-          Nothing -> do
-            tell p
-            return $ BehaviorInfo v sFuture sct
-          Just t'
-            | t' == curTime && t' == t -> do
-              tell p
-              return $ BehaviorInfo v sFuture sct
-            | t' <= curTime -> reRun
       Nothing -> reRun
-
+      Just (t, bInfo, p) -> do
+        ct <- lift $ changeTime bInfo
+        case ct of
+          Just t'
+            | t' < curTime -> checkFutureRefValid
+          _ -> do
+            tell p
+            return bInfo
+--}
 instance Functor (Behavior t) where
   fmap = liftM
 
 instance Applicative (Behavior t) where
   pure = return
   (<*>) = ap
+
+leftMostChange :: Sample t (EvInfo t a) -> Sample t (EvInfo t a) -> Sample t (EvInfo t a)
+leftMostChange se1 se2 = do
+  e1 <- se1
+  e2 <- se2
+
+  case e1 of
+    NotFired -> return e2
+    FiredNow a pa -> return $ FiredNow a pa
 
 instance Monad (Behavior t) where
   return = BConst
@@ -321,19 +358,19 @@ instance Monad (Behavior t) where
     (BehaviorInfo a sFutureA sta) <- runB bh
     (BehaviorInfo b sFutureB stb) <- runB (f a)
 
-    let sFutureF = do
+    let sFutureF sFutureA = do
           futureA <- sFutureA
 
           case futureA of
             NotFired -> sFutureB
-            FiredNow a' pa' -> do
-              (BehaviorInfo b' sFutureB' stb', pb') <- runWriterT . unHold $ runB $ f a'
+            FiredNow (BehaviorInfo a' sFutureA' sta') pa' -> do
+              (bInfo@(BehaviorInfo b' sFutureB' stb'), pb') <- runWriterT . unHold $ runB $ f a'
               futureB' <- sFutureB'
               case futureB' of
-                NotFired -> return $ FiredNow b' (pa' <> pb')
-                FiredNow fb' pfb' -> return $ FiredNow fb' (pa' <> pb' <> pfb')
+                NotFired -> return $ FiredNow (BehaviorInfo b' (leftMostChange (sFutureF sFutureA') sFutureB') (firstTime sta' stb')) (pa' <> pb')
+                FiredNow (BehaviorInfo fb' sFutureFB' stfb') pfb' -> return $ FiredNow (BehaviorInfo fb' sFutureFB' (firstTime sta' stfb')) (pa' <> pb' <> pfb')
 
-    return $ BehaviorInfo b sFutureF (firstTime sta stb)
+    return $ BehaviorInfo b (sFutureF sFutureA) (firstTime sta stb)
 
 instance MonadFix (Behavior t) where
   mfix f = Behavior $ mfix (\(~(BehaviorInfo a _ _)) -> runB $ f a)
@@ -342,18 +379,19 @@ sample :: Behavior t a -> Hold t a
 sample = fmap currentVal . runB
 
 sampleAfter :: Behavior t a -> Hold t a
+sampleAfter (BConst x) = return x
 sampleAfter b = Hold $ do
   (BehaviorInfo a sfa _, p) <- lift $ runWriterT . unHold $ runB b
   fa <- lift sfa
   case fa of
     NotFired -> tell p >> return a
-    FiredNow a' p' -> tell p' >> return a'
+    FiredNow aInfo' p' -> tell p' >> return (currentVal aInfo')
 
 changes :: Behavior t a -> EvStream t a
 changes (BConst _) = never
 changes b = EvStream $ do
   (BehaviorInfo _ sfa _, _) <- runWriterT . unHold $ runB b
-  sfa
+  fmap currentVal <$> sfa
 
 newChangeTime :: IO (Sample t (Maybe Time), Time -> IO ())
 newChangeTime = do
@@ -401,7 +439,7 @@ holdEs evs iv = Hold $ do
   return $ Behavior $ Hold $ do
     (v, effects, sct, _) <- liftIO $ readIORef ref
     tell effects
-    let sFuture = fmap (fmap (\(_,v,_,_,_) -> v)) mToPush
+    let sFuture = fmap (fmap (\(_,v,_,sct',_) -> BehaviorInfo v sFuture sct')) mToPush
     return $ BehaviorInfo v sFuture sct
 
 switch :: Behavior t (EvStream t a) -> EvStream t a
@@ -434,6 +472,3 @@ planEs evs = PlanHold $ do
 
   tell (Plans $ void plans, mempty)
   return plans
-
-class (Monad (m t)) => Sample m where
-  sample :: Behavior t a -> m t a

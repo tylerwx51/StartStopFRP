@@ -46,8 +46,8 @@ main = runGlossHoldIO (InWindow "X-Y Pos" (500, 500) (10, 10)) white 60 $ \tick 
   bMousePos <- liftHold $ holdEs (filterMapEs getDelta ev) (0,0)
   bTrail <- liftHold $ holdLastNSecs 1.2 clock bMousePos
 
-  let mouseClickEvent (EventKey (MouseButton LeftButton) Up _ _) = Just True
-      mouseClickEvent (EventKey (MouseButton LeftButton) Down _ _) = Just False
+  let mouseClickEvent (EventKey (MouseButton LeftButton) Up _ _) = Just False
+      mouseClickEvent (EventKey (MouseButton LeftButton) Down _ _) = Just True
       mouseClickEvent _ = Nothing
 
   bMouseState <- liftHold $ holdEs (filterMapEs mouseClickEvent ev) False
@@ -56,17 +56,18 @@ main = runGlossHoldIO (InWindow "X-Y Pos" (500, 500) (10, 10)) white 60 $ \tick 
       isPEvent _ = False
 
   bPlot1 <- liftHold $ smoothPlot bTime (fmap fst bMousePos)
-  bPlot2 <- liftHold $ stepPlot bTime (fmap (\p -> if p then (0 :: Float) else 200) bMouseState)
+  bPlot2 <- liftHold $ stepPlot bTime (fmap (\p -> if not p then (0 :: Float) else 200) bMouseState)
   plotAtTime "Chart-Gloss.png" (filterEs isPEvent ev) ((>>) <$> bPlot1 <*> bPlot2)
   planEs $ print "Should plot" <$ filterEs isPEvent ev
   return $ fmap decayColorLine bTrail
 
 {-
-main = testPlanHold 100000 $ \tick -> do
+main = testPlanHold 10 $ \tick -> liftHold $ do
 
-  bTime <- liftHold $ foldEs' (+) tick 0
+  bTime <- foldEs' (+) tick 0
   let clock = changes bTime
-  --bMousePos <- holdEs ev ""
-
+  bTime2 <- foldEs' (flip (:)) clock []
+  let c = changes $ (,) <$> bTime <*> bTime2
+  b <- foldEs' (flip (:)) c []
   return $ fmap show bTime
 -}

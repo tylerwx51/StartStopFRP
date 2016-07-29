@@ -22,7 +22,7 @@ testPlanHold n eHold = do
   initPlanHold (\a -> modifyIORef actionsRef (\as -> as ++ [a])) $ do
     (trigger, clock) <- callbackStream
     liftIO $ writeIORef clockTriggerRef trigger
-    b <- eHold never
+    b <- eHold $ fmap head clock
     let r = startOnFire $ sampleAfter b <$ clock
     planEs $ fmap (writeIORef sampleRef) r
     return ()
@@ -36,7 +36,7 @@ testPlanHold n eHold = do
         sequence_ actions
 
         s <- readIORef sampleRef
-        --print (i, s)
+        print (i, s)
         unless (i > n) $ loop (i + 1)
 
   loop 0
