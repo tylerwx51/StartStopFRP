@@ -24,10 +24,10 @@ callbackStream = do
       evs = EvStream $ do
               t <- ask
               tvs <- liftIO $ readIORef firedValsRef
-              let vs = fmap snd . filter (\(t', v) -> t == t') $ tvs
+              let vs' = fmap snd . filter (\(t', v) -> t == t') $ tvs
               liftIO $ modifyIORef firedValsRef (\vs -> let vs' = filter (\(t', v) -> t <= t') vs in reallySeqList vs' vs')
 
-              --vs <- mapM return vs' -- fixes some leak that is caused by laziness with vs'
+              vs <- mapM return vs' -- fixes some leak that is caused by laziness with vs'
 
               case vs of
                 [] -> return NotFired

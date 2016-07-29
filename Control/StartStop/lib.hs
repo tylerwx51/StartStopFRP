@@ -125,7 +125,7 @@ foldEs f es iv = do
 foldEs' :: (a -> b -> a) -> EvStream t b -> a -> Hold t (Behavior t a)
 foldEs' f es iv = do
   rec
-    let ups = (\va vb -> seq vb (f va vb)) <$> b <@> es
+    ups <- force $ f <$> b <@> es
     b <- holdEs ups iv
   return b
 
@@ -147,3 +147,6 @@ count e = foldEs' (\v _ -> v + 1) e 0
 
 debugIO :: EvStream t (IO ()) -> Hold t ()
 debugIO = void . unsafePlan
+
+force :: EvStream t a -> Hold t (EvStream t a)
+force = unsafePlan . fmap (\x -> return $! x)

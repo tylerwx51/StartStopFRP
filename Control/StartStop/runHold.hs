@@ -36,7 +36,7 @@ testPlanHold n eHold = do
         sequence_ actions
 
         s <- readIORef sampleRef
-        print (i, s)
+        --print (i, s)
         unless (i > n) $ loop (i + 1)
 
   loop 0

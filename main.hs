@@ -37,7 +37,7 @@ decayColorLine vs = foldl' (flip (<>)) mempty $ fmap (\(t, (x, y)) -> color (tim
   return $ fmap decayColorLine bTrail
   -}
 
-main = runGlossHoldIO (InWindow "X-Y Pos" (500, 500) (10, 10)) white 60 $ \tick ev -> do
+main2 = runGlossHoldIO (InWindow "X-Y Pos" (500, 500) (10, 10)) white 60 $ \tick ev -> do
   let getDelta (EventMotion (dx, dy)) = Just (dx, dy)
       getDelta _ = Nothing
 
@@ -61,13 +61,8 @@ main = runGlossHoldIO (InWindow "X-Y Pos" (500, 500) (10, 10)) white 60 $ \tick 
   planEs $ print "Should plot" <$ filterEs isPEvent ev
   return $ fmap decayColorLine bTrail
 
-{-
-main = testPlanHold 10 $ \tick -> liftHold $ do
+
+main = testPlanHold 100000 $ \tick -> liftHold $ do
 
   bTime <- foldEs' (+) tick 0
-  let clock = changes bTime
-  bTime2 <- foldEs' (flip (:)) clock []
-  let c = changes $ (,) <$> bTime <*> bTime2
-  b <- foldEs' (flip (:)) c []
   return $ fmap show bTime
--}
