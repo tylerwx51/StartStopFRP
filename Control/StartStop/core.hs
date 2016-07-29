@@ -312,7 +312,6 @@ memoB b = unsafePerformIO $ do
         checkFutureRefValid = do
           mtfuture <- liftIO $ readIORef futureRef
           case mtfuture of
-            Nothing -> reRun
             Just (tf', bInfo', p')
               | tf' /= curTime -> do
                 ct' <- lift $ changeTime bInfo'
@@ -323,6 +322,7 @@ memoB b = unsafePerformIO $ do
                     liftIO $ writeIORef ref $ Just (curTime, bInfo', p')
                     tell p'
                     return bInfo'
+            _ -> reRun
 
     case mtv of
       Nothing -> reRun
@@ -345,10 +345,9 @@ instance Applicative (Behavior t) where
 leftMostChange :: Sample t (EvInfo t a) -> Sample t (EvInfo t a) -> Sample t (EvInfo t a)
 leftMostChange se1 se2 = do
   e1 <- se1
-  e2 <- se2
 
   case e1 of
-    NotFired -> return e2
+    NotFired -> se2
     FiredNow a pa -> return $ FiredNow a pa
 
 instance Monad (Behavior t) where
