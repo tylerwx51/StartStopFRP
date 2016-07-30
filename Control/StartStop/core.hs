@@ -1,4 +1,4 @@
-{-# LANGUAGE MultiParamTypeClasses, FlexibleInstances, GeneralizedNewtypeDeriving, DoAndIfThenElse, ScopedTypeVariables #-}
+{-# LANGUAGE MultiParamTypeClasses, FlexibleInstances, GeneralizedNewtypeDeriving, DoAndIfThenElse, ScopedTypeVariables, BangPatterns #-}
 module Control.StartStop.Core where
 
 import Control.Applicative
@@ -77,7 +77,7 @@ runPushes (Hold h) = runWriterT h
 runPushesIO :: HoldIO t a -> Sample t (a, Pushes t)
 runPushesIO (HoldIO h) = runWriterT h
 
-data EvInfo t a = NotFired | FiredNow a (Pushes t)
+data EvInfo t a = NotFired | FiredNow !a !(Pushes t)
 
 instance Functor (EvInfo t) where
   fmap = liftM
@@ -165,14 +165,14 @@ listenPushes = pushes . fmap listen . unPushes
 type VoidEvent t = Sample t (Maybe Time) -- Void events fire and then return the time right before they fired
                                          -- at all time past that time.
 
-data BehaviorInfo t a = BehaviorInfo { currentVal :: a -- the current value of the behavior
-                                     , futureInfo :: Sample t (EvInfo t (BehaviorInfo t a))
+data BehaviorInfo t a = BehaviorInfo { currentVal :: !a -- the current value of the behavior
+                                     , futureInfo :: !(Sample t (EvInfo t (BehaviorInfo t a)))
                                      -- let the current time be t, and let t' be "just after t".
                                      -- If b t /= b t', then futureInfo will return the behaviorInfo
                                      -- for the behavior b at t'. This allows the ability to be able to
                                      -- as if behaviors immediatly started holding there value. It also
                                      -- helps with memoization.
-                                     , changeTime :: VoidEvent t
+                                     , changeTime :: !(VoidEvent t)
                                      -- a void event that fires when the current value is no longer
                                      -- the current value. This is used to greatly improve the power
                                      -- of memoization
@@ -427,6 +427,10 @@ startOnFire (EvStream me) = memoEvs $ EvStream $ do
       (a, pa) <- runPushes ha
       return $ FiredNow a (pha <> pa)
 
+{-
+- an EvStream that fires when ever the sorce fires with the value of Just a.
+- The EvStream fires with a value of a.
+-}
 catMabyeEs :: EvStream t (Maybe a) -> EvStream t a
 catMabyeEs Never = Never
 catMabyeEs (EvStream me) = memoEvs $ EvStream $ do
@@ -437,6 +441,9 @@ catMabyeEs (EvStream me) = memoEvs $ EvStream $ do
       Nothing -> return NotFired
       Just a -> return $ FiredNow a pma
 
+{-
+- Fires whenever both the outer and inner event streams fire at the same time.
+-}
 coincidence :: EvStream t (EvStream t a) -> EvStream t a
 coincidence Never = Never
 coincidence (EvStream em) = memoEvs $ EvStream $ do
@@ -449,10 +456,11 @@ coincidence (EvStream em) = memoEvs $ EvStream $ do
         NotFired -> return NotFired
         FiredNow a p2 -> return $ FiredNow a (p1 <> p2)
 
-
+{- Sample the behavior in a hold at the current time. -}
 sample :: Behavior t a -> Hold t a
 sample = fmap currentVal . runB
 
+{- give the value of the behavior "just after" the current time. -}
 sampleAfter :: Behavior t a -> Hold t a
 sampleAfter (BConst x) = return x
 sampleAfter b = Hold $ do
@@ -462,6 +470,7 @@ sampleAfter b = Hold $ do
     NotFired -> tell p >> return a
     FiredNow aInfo' p' -> tell p' >> return (currentVal aInfo')
 
+{- Whenever the behavior changes value, the produced event stream fires-}
 changes :: Behavior t a -> EvStream t a
 changes (BConst _) = never
 changes b = EvStream $ do
@@ -504,6 +513,7 @@ holdEs evs iv = Hold $ do
     let sFuture = fmap (fmap (\(_,v,_,sct',_) -> BehaviorInfo v sFuture sct')) mToPush
     return $ BehaviorInfo v sFuture sct
 
+{- Creates a event stream that fires whenever the current event stream fires. -}
 switch :: Behavior t (EvStream t a) -> EvStream t a
 switch (BConst evs) = evs
 switch bevs = EvStream $ do

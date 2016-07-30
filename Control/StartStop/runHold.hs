@@ -1,4 +1,4 @@
-{-# LANGUAGE RecursiveDo #-}
+{-# LANGUAGE RecursiveDo, BangPatterns #-}
 module Control.StartStop.RunHold where
 
 import Control.StartStop.Core
@@ -27,7 +27,7 @@ testPlanHold n eHold = do
     planEs $ fmap (writeIORef sampleRef) r
     return ()
 
-  let loop i = do
+  let loop !i = do
         trigger <- readIORef clockTriggerRef
         trigger (i + 1)
 
