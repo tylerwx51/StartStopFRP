@@ -166,13 +166,13 @@ type VoidEvent t = Sample t (Maybe Time) -- Void events fire and then return the
                                          -- at all time past that time.
 
 data BehaviorInfo t a = BehaviorInfo { currentVal :: !a -- the current value of the behavior
-                                     , futureInfo :: !(Sample t (EvInfo t (BehaviorInfo t a)))
+                                     , futureInfo :: Sample t (EvInfo t (BehaviorInfo t a))
                                      -- let the current time be t, and let t' be "just after t".
                                      -- If b t /= b t', then futureInfo will return the behaviorInfo
                                      -- for the behavior b at t'. This allows the ability to be able to
                                      -- as if behaviors immediatly started holding there value. It also
                                      -- helps with memoization.
-                                     , changeTime :: !(VoidEvent t)
+                                     , changeTime :: VoidEvent t
                                      -- a void event that fires when the current value is no longer
                                      -- the current value. This is used to greatly improve the power
                                      -- of memoization
@@ -319,8 +319,8 @@ instance Monad (Behavior t) where
 instance MonadFix (Behavior t) where
   mfix f = Behavior $ mfix (\(~(BehaviorInfo a _ _)) -> runB $ f a)
 
-newChangeTime :: IO (VoidEvent t, Time -> IO ())
-newChangeTime = do
+newVoidEvent :: IO (VoidEvent t, Time -> IO ())
+newVoidEvent = do
   ct <- newIORef Nothing
 
   let sct = do
@@ -405,7 +405,7 @@ never = Never
 mergefEs :: (a -> a -> a) -> EvStream t a -> EvStream t a -> EvStream t a
 mergefEs _ Never e = e
 mergefEs _ e Never = e
-mergefEs f (EvStream mel) (EvStream mer) = memoEvs $ EvStream $ do
+mergefEs f (EvStream mel) (EvStream mer) = EvStream $ do
   el <- mel
   er <- mer
   case (el, er) of
@@ -419,7 +419,7 @@ mergefEs f (EvStream mel) (EvStream mer) = memoEvs $ EvStream $ do
 --}
 startOnFire :: EvStream t (Hold t a) -> EvStream t a
 startOnFire Never = Never
-startOnFire (EvStream me) = memoEvs $ EvStream $ do
+startOnFire (EvStream me) = EvStream $ do
   eInfo <- me
   case eInfo of
     NotFired -> return NotFired
@@ -433,7 +433,7 @@ startOnFire (EvStream me) = memoEvs $ EvStream $ do
 -}
 catMabyeEs :: EvStream t (Maybe a) -> EvStream t a
 catMabyeEs Never = Never
-catMabyeEs (EvStream me) = memoEvs $ EvStream $ do
+catMabyeEs (EvStream me) = EvStream $ do
   eInfo <- me
   case eInfo of
     NotFired -> return NotFired
@@ -446,7 +446,7 @@ catMabyeEs (EvStream me) = memoEvs $ EvStream $ do
 -}
 coincidence :: EvStream t (EvStream t a) -> EvStream t a
 coincidence Never = Never
-coincidence (EvStream em) = memoEvs $ EvStream $ do
+coincidence (EvStream em) = EvStream $ do
   eInfo <- em
   case eInfo of
     NotFired -> return NotFired
@@ -482,7 +482,7 @@ holdEs Never iv = return (return iv)
 holdEs evs iv = Hold $ do
   startTime <- ask
 
-  (oTime, trigger) <- liftIO newChangeTime
+  (oTime, trigger) <- liftIO newVoidEvent
   ref <- liftIO $ newIORef (iv, mempty, oTime, trigger)
 
   let pushAction t newVal subEffects sct trigger = do
@@ -501,7 +501,7 @@ holdEs evs iv = Hold $ do
                                 if startTime == t
                                 then return Nothing
                                 else do
-                                  (newCT, trigger) <- liftIO newChangeTime
+                                  (newCT, trigger) <- liftIO newVoidEvent
                                   return $ Just (t, a, p, newCT, trigger)
 
   tell $ Pushes $ (\(t, a, p, ct, trigger) -> pushAction t a p ct trigger) <$> EvStream mToPush

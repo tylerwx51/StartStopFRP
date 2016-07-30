@@ -13,21 +13,29 @@ callbackStream :: (Show a) => PlanHold t (a -> IO (), EvStream t [a])
 callbackStream = do
   cl <- PlanHold $ asks clock
   sr <- PlanHold $ asks scheduleRound
-  firedValsRef <- liftIO $ newIORef []
+  currentValRef <- liftIO $ newIORef Nothing
+  futureValRef <- liftIO $ newIORef []
 
   let trigger v = do
         (T curTime) <- cl
         let t = T (curTime + 1)
-        modifyIORef' firedValsRef ((t, v):)
+        modifyIORef' futureValRef ((t, v):)
         sr
 
       evs = EvStream $ do
               t <- ask
-              tvs <- liftIO $ readIORef firedValsRef
-              let vs' = fmap snd . filter (\(t', v) -> t == t') $ tvs
-              liftIO $ modifyIORef firedValsRef (\vs -> let vs' = filter (\(t', v) -> t <= t') vs in reallySeqList vs' vs')
+              mtvs <- liftIO $ readIORef currentValRef
+              vs <- case mtvs of
+                Just (t', vs)
+                  | t' == t -> return vs
+                _ -> do
+                  tvs <- liftIO $ readIORef futureValRef
+                  let vs' = fmap snd . filter (\(t', v) -> t == t') $ tvs
+                  liftIO $ writeIORef currentValRef (Just (t, vs'))
+                  liftIO $ modifyIORef' futureValRef (\vs -> let vs' = filter (\(t', v) -> t < t') vs in reallySeqList vs' vs')
+                  return vs'
 
-              vs <- mapM return vs' -- fixes some leak that is caused by laziness with vs'
+              --vs <- mapM return vs' -- fixes some leak that is caused by laziness with vs'
 
               case vs of
                 [] -> return NotFired
