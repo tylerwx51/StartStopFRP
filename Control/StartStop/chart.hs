@@ -35,7 +35,6 @@ stepPlot time b = do
   bPoints <- foldEs' (\vs (t,v,v') -> (t,v'):(t,v):vs) (startOnFire $ hPoints <$> timeChanges) [(t,v)]
   return $ fmap (\vs -> plot $ line "Step Plot" [vs]) bPoints
 
-
 plotEvStream :: Behavior t Float -> EvStream t a -> Hold t (Behavior t (EC (Layout Float a) ()))
 plotEvStream time e = do
   bPoints <- foldEs (\vs (t,v) -> (t,v):vs) ((,) <$> time <@> e) []

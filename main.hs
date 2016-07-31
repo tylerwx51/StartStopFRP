@@ -1,3 +1,4 @@
+{-# LANGUAGE BangPatterns #-}
 import Control.StartStop.Gloss
 import Control.StartStop.Core
 import Control.StartStop.Lib
@@ -8,9 +9,17 @@ import Graphics.Gloss.Interface.IO.Game
 import Control.Monad.IO.Class
 import Data.Foldable
 import Data.Monoid
+import Graphics.Rendering.Chart.Easy as Chart hiding(translate, white)
+
+reallySeqList :: [a] -> b -> b
+reallySeqList [] = seq []
+reallySeqList (x:xs) = reallySeqList xs
+
+rseq :: [a] -> [a]
+rseq xs = reallySeqList xs xs
 
 holdLastNSecs :: Float -> EvStream t Float -> Behavior t a -> Hold t (Behavior t [(Float, a)])
-holdLastNSecs holdTime clock b = foldEs' (\vs (t, v) -> (t, v) : filter ((> t - holdTime) . fst) vs) (flip (,) <$> b <@> clock) []
+holdLastNSecs holdTime clock b = foldEs' (\(!vs) (!t, !v) -> rseq $ (t, v) : filter ((> t - holdTime) . fst) vs) (flip (,) <$> b <@> clock) []
 
 decayColorLine :: [(Float, (Float, Float))] -> Picture
 decayColorLine vs = foldl' (flip (<>)) mempty $ fmap (\(t, (x, y)) -> color (timeColor t) $ translate x y $ circleSolid 10) $ vs
@@ -37,7 +46,7 @@ decayColorLine vs = foldl' (flip (<>)) mempty $ fmap (\(t, (x, y)) -> color (tim
   return $ fmap decayColorLine bTrail
   -}
 
-main2 = runGlossHoldIO (InWindow "X-Y Pos" (500, 500) (10, 10)) white 60 $ \tick ev -> do
+main = runGlossHoldIO (InWindow "X-Y Pos" (500, 500) (10, 10)) white 60 $ \tick ev -> do
   let getDelta (EventMotion (dx, dy)) = Just (dx, dy)
       getDelta _ = Nothing
 
@@ -55,14 +64,20 @@ main2 = runGlossHoldIO (InWindow "X-Y Pos" (500, 500) (10, 10)) white 60 $ \tick
   let isPEvent (EventKey (Char 'p') Up _ _) = True
       isPEvent _ = False
 
-  bPlot1 <- liftHold $ smoothPlot bTime (fmap fst bMousePos)
-  bPlot2 <- liftHold $ stepPlot bTime (fmap (\p -> if not p then (0 :: Float) else 200) bMouseState)
+  bMousePosData <- liftHold $ holdLastNSecs 3 clock (fmap snd bMousePos)
+  --planEs $ fmap (\xs -> mapM_ (\x -> return $! x) xs) $ changes bMousePosData
+  bMouseStateData <- liftHold $ holdLastNSecs 3 clock (fmap (\p -> if not p then (0 :: Float) else 200) bMouseState)
+  let bPlot1 = fmap (plot . Chart.line "Mouse Held" . return) bMousePosData
+      bPlot2 = fmap (plot . Chart.line "Mouse Held" . return) bMouseStateData
+
   plotAtTime "Chart-Gloss.png" (filterEs isPEvent ev) ((>>) <$> bPlot1 <*> bPlot2)
   planEs $ print "Should plot" <$ filterEs isPEvent ev
+
   return $ fmap decayColorLine bTrail
 
-
+{-
 main = testPlanHold 100000 $ \tick -> liftHold $ do
 
   bTime <- foldEs' (+) tick 0
   return $ fmap show bTime
+-}
