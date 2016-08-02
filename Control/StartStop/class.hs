@@ -23,6 +23,7 @@ class (MonadFix (Behavior t), Functor (EvStream t), MonadFix (Hold t), MonadFix 
   sampleAfter :: Behavior t a -> Hold t a
   changes :: Behavior t a -> EvStream t a
   unsafePlan :: EvStream t (IO a) -> Hold t (EvStream t a)
+  unsafeIOMap :: EvStream t (IO a) -> EvStream t a
 
 data Core t
 instance StartStopFRP (Core t) where
@@ -44,3 +45,4 @@ instance StartStopFRP (Core t) where
   sampleAfter = Core.sampleAfter
   changes = Core.changes
   unsafePlan = Core.unsafePlan
+  unsafeIOMap = Core.unsafeIOMap

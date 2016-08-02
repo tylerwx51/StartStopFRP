@@ -4,6 +4,7 @@ import Control.StartStop.Core
 import Control.StartStop.Lib
 import Control.StartStop.Chart
 import Control.StartStop.RunHold
+import Control.StartStop.TestFun
 import Graphics.Gloss
 import Graphics.Gloss.Interface.IO.Game
 import Control.Monad.IO.Class
@@ -64,7 +65,7 @@ main = runGlossHoldIO (InWindow "X-Y Pos" (500, 500) (10, 10)) white 60 $ \tick 
   let isPEvent (EventKey (Char 'p') Up _ _) = True
       isPEvent _ = False
 
-  bMousePosData <- liftHold $ holdLastNSecs 3 clock (fmap snd bMousePos)
+  bMousePosData <- liftHold $ holdLastNSecs 3 clock (fmap undefined bMousePos)
   --planEs $ fmap (\xs -> mapM_ (\x -> return $! x) xs) $ changes bMousePosData
   bMouseStateData <- liftHold $ holdLastNSecs 3 clock (fmap (\p -> if not p then (0 :: Float) else 200) bMouseState)
   let bPlot1 = fmap (plot . Chart.line "Mouse Held" . return) bMousePosData

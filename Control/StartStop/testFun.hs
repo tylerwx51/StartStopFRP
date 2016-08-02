@@ -66,3 +66,4 @@ instance StartStopFRP Test where
 
   changes = undefined
   unsafePlan = undefined
+  unsafeIOMap = undefined
