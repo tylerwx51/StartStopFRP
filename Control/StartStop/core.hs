@@ -478,7 +478,7 @@ changes b = EvStream $ do
   fmap currentVal <$> sfa
 
 holdEs :: EvStream t a -> a -> Hold t (Behavior t a)
-holdEs Never iv = return (return iv)
+--holdEs Never iv = return (return iv) -- can't do because bad use with mfix
 holdEs evs iv = Hold $ do
   startTime <- ask
 
@@ -496,7 +496,9 @@ holdEs evs iv = Hold $ do
           Never -> return NotFired
           (EvStream effs) -> effs
 
-  (EvStream mToPush) <- liftIO $ fmap catMabyeEs $ unsafeHoldIOSequence $ flip fmap (listenPushes evs) $ \(a, p) -> HoldIO $ do
+  -- toPush can't be made with unsafeHoldIOSequence because
+  -- it disallows for use of mfix
+  let toPush = catMabyeEs $ unsafeHoldIOMap $ flip fmap (listenPushes evs) $ \(a, p) -> HoldIO $ do
                                 t <- ask
                                 if startTime == t
                                 then return Nothing
@@ -504,21 +506,25 @@ holdEs evs iv = Hold $ do
                                   (newCT, trigger) <- liftIO newVoidEvent
                                   return $ Just (t, a, p, newCT, trigger)
 
-  tell $ Pushes $ (\(t, a, p, ct, trigger) -> pushAction t a p ct trigger) <$> EvStream mToPush
+  tell $ Pushes $ (\(t, a, p, ct, trigger) -> pushAction t a p ct trigger) <$> toPush
   tell subPushes
 
   return $ Behavior $ Hold $ do
     (v, effects, sct, _) <- liftIO $ readIORef ref
     tell effects
-    let sFuture = fmap (fmap (\(_,v,_,sct',_) -> BehaviorInfo v sFuture sct')) mToPush
+    let sFuture = case toPush of
+                    Never -> return NotFired
+                    EvStream mToPush -> fmap (fmap (\(_,v,_,sct',_) -> BehaviorInfo v sFuture sct')) mToPush
     return $ BehaviorInfo v sFuture sct
 
 {- Creates a event stream that fires whenever the current event stream fires. -}
 switch :: Behavior t (EvStream t a) -> EvStream t a
 switch (BConst evs) = evs
 switch bevs = EvStream $ do
-  (BehaviorInfo (EvStream me) _ _, _) <- runWriterT . unHold $ runB bevs
-  me
+  (BehaviorInfo me _ _, _) <- runWriterT . unHold $ runB bevs
+  case me of
+    Never -> return NotFired
+    EvStream em' -> em'
 
 {-# NOINLINE unsafeHoldIOMap #-}
 unsafeHoldIOMap :: EvStream t (HoldIO t a) -> EvStream t a
