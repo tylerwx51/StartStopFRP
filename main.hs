@@ -1,26 +1,18 @@
-{-# LANGUAGE BangPatterns, RecursiveDo, GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE RecursiveDo #-}
 import Control.StartStop.Gloss
 import Control.StartStop.Core
 import Control.StartStop.Lib
-import Control.StartStop.Chart
 import Control.StartStop.RunHold
-import Control.StartStop.TestFun
+import Control.Monad
+
 import Graphics.Gloss
 import Graphics.Gloss.Data.Extent
 import Graphics.Gloss.Interface.IO.Game as Gloss
-import Control.Monad.IO.Class
-import Control.Monad.State
-import Data.Foldable hiding(toList)
-import Data.Traversable
-import Data.Monoid hiding (Sum(..), Product(..))
-import Buttons
-import Graphics.Rendering.Chart.Easy as Chart hiding(translate, white, scale)
 
-import Data.IORef
-import Data.Maybe
-import Data.Functor.Compose
-import Data.Functor.Sum
-import Data.Functor.Product
+import Data.Foldable hiding(toList)
+import Data.Monoid hiding (Sum(..), Product(..))
+
+import Buttons
 
 reallySeqList :: [a] -> b -> b
 reallySeqList [] = seq []
@@ -45,17 +37,7 @@ decayColorLine vs = foldl' (flip (<>)) mempty $ fmap (\(t, (x, y)) -> color (tim
 
     pair = zipWith (\(t, pos1) (_, pos2) -> (t, [pos1, pos2])) vs (drop 1 vs)
 
-{-main = runGlossHoldIO (InWindow "FDSLK" (500,500) (10, 10)) white 60 $ \tick ev -> liftHold $ do
-  let getDelta (EventMotion (dx, dy)) = Just (dx, dy)
-      getDelta _ = Nothing
-
-  bTime <- foldEs' (+) tick 0
-  let clock = changes bTime
-  bMousePos <- holdEs (filterMapEs getDelta ev) (0,0)
-  bTrail <- holdLastNSecs 1.2 clock bMousePos
-
-  return $ fmap decayColorLine bTrail-}
-
+{-
 main2 = runGlossHoldIO (InWindow "X-Y Pos" (500, 500) (10, 10)) white 60 $ \tick ev -> do
   let getDelta (EventMotion (dx, dy)) = Just (dx, dy)
       getDelta _ = Nothing
@@ -84,28 +66,7 @@ main2 = runGlossHoldIO (InWindow "X-Y Pos" (500, 500) (10, 10)) white 60 $ \tick
   planEs $ print "Should plot" <$ filterEs isPEvent (fmap head ev)
 
   return $ fmap decayColorLine bTrail
-
-main3 :: IO ()
-main3 = runGlossHoldIO (InWindow "X-Y Pos" (500, 500) (10, 10)) white 60 $ \tick ev -> liftHold $ do
-              bTime <- foldEs' (+) tick 0
-              let clock = changes bTime
-
-                  mouseClickEvent (EventKey (MouseButton LeftButton) Up _ pos) = Just pos
-                  mouseClickEvent _ = Nothing
-
-                  mouseClickEvs = filterMapEs mouseClickEvent $ fmap head ev
-
-              bLastMouseClick <- holdEs mouseClickEvs (0,0)
-              let bMouseClickPic = fmap (translate (negate 240) (negate 240) . scale 0.4 0.4 . text . show) bLastMouseClick
-
-                  getDelta (EventMotion (dx, dy)) = Just (dx, dy)
-                  getDelta _ = Nothing
-              bMousePos <- holdEs (filterMapEs getDelta $ fmap head ev) (0,0)
-              bMousePosData <- holdLastNSecs 5 clock (fmap snd bMousePos)
-              let bMousePosPic = fmap (translate 0 0 . scale 50 1 . drawPlot) bMousePosData
-
-              return $ (<>) <$> bMouseClickPic <*> bMousePosPic
-
+-}
 
 data Screen t = Screen { bPic :: Behavior t Picture, bChange :: EvStream t (Screen t) }
 main :: IO ()
@@ -120,28 +81,41 @@ main = runGlossHoldIO (InWindow "X-Y Pos" (500, 500) (10, 10)) white 60 $ \tick 
           switcher bm $ fmap bPic stream
 
 extentClick :: Extent
-extentClick = makeExtent 35 5 (-60) (-140)
+extentClick = makeExtent 35 5 (-60) (-200)
 
 extentMouseTracker :: Extent
-extentMouseTracker = makeExtent 35 5 (200-60) (200-140)
+extentMouseTracker = makeExtent 35 5 (200-60) (200-200)
+
+extentMouseTrail :: Extent
+extentMouseTrail = makeExtent (negate 10) (negate 40) (negate 60) (negate 200)
+
+isMouseClickEvent :: Event -> Maybe (Float, Float)
+isMouseClickEvent (EventKey (MouseButton LeftButton) Down _ pos) = Just pos
+isMouseClickEvent _ = Nothing
+
+isMouseChange :: Event -> Maybe (Float, Float)
+isMouseChange (EventMotion (dx, dy)) = Just (dx, dy)
+isMouseChange _ = Nothing
 
 mainMenu :: EvStream t Float -> EvStream t [Event] -> Hold t (Screen t)
 mainMenu clock ev = do
   let clickButton = renderButton extentClick "Click Example"
-      clickButtonEvent = ffilter (any (isClickedBy extentClick)) ev
+      clickButtonEvent = void $ ffilter (any (isClickedBy extentClick)) ev
       enterClick = startOnFire ((exampleToScreen clock ev =<< (clickExample ev)) <$ clickButtonEvent)
 
       mouseTrackButton = renderButton extentMouseTracker "Mouse Tracker"
-      mouseButtonEvent = ffilter (any (isClickedBy extentMouseTracker)) ev
+      mouseButtonEvent = void $ ffilter (any (isClickedBy extentMouseTracker)) ev
       enterMouse = startOnFire ((exampleToScreen clock ev =<< (mouseTrackerExample clock ev)) <$ mouseButtonEvent)
-  return $ Screen (return $ clickButton <> mouseTrackButton) (leftmost enterClick enterMouse)
+
+      mouseTrailButton = renderButton extentMouseTrail "Mouse Trail"
+      mouseTrailEvent = void $ ffilter (any (isClickedBy extentMouseTrail)) ev
+      enterTrail = startOnFire ((exampleToScreen clock ev =<< (mouseTrailExample clock ev)) <$ mouseTrailEvent)
+
+  return $ Screen (return $ clickButton <> mouseTrackButton <> mouseTrailButton) (foldr1 leftmost [enterClick, enterMouse, enterTrail])
 
 clickExample :: EvStream t [Event] -> Hold t (Behavior t Picture)
 clickExample ev = do
-  let mouseClickEvent (EventKey (MouseButton LeftButton) Down _ pos) = Just pos
-      mouseClickEvent _ = Nothing
-
-      mouseClickEvs = filterMap (\xs -> case filterMap mouseClickEvent xs of
+  let mouseClickEvs = filterMap (\xs -> case filterMap isMouseClickEvent xs of
                                           [] -> Nothing
                                           (x:_) -> Just x) ev
 
@@ -150,16 +124,20 @@ clickExample ev = do
 
 mouseTrackerExample :: EvStream t Float -> EvStream t [Event] -> Hold t (Behavior t Picture)
 mouseTrackerExample clock ev = do
-
-  let getDelta (EventMotion (dx, dy)) = Just (dx, dy)
-      getDelta _ = Nothing
-
-  bMousePos <- holdEs (filterMap (\xs -> case filterMap getDelta xs of
+  bMousePos <- holdEs (filterMap (\xs -> case filterMap isMouseChange xs of
                                       [] -> Nothing
                                       (x:_) -> Just x) ev) (0,0)
   bMousePosData <- holdLastNSecs 5 clock (fmap snd bMousePos)
   return $ fmap (translate 0 0 . scale 50 1 . drawPlot) bMousePosData
 
+mouseTrailExample :: EvStream t Float -> EvStream t [Event] -> Hold t (Behavior t Picture)
+mouseTrailExample clock ev = do
+  bMousePos <- holdEs (filterMapEs (\xs -> case filterMap isMouseChange xs of
+                                      [] -> Nothing
+                                      (x:_) -> Just x) ev) (0,0)
+  bTrail <- holdLastNSecs 1.2 clock bMousePos
+
+  return $ fmap decayColorLine bTrail
 
 exampleToScreen :: EvStream t Float -> EvStream t [Event] -> Behavior t Picture -> Hold t (Screen t)
 exampleToScreen clock ev bPic = do
@@ -168,6 +146,9 @@ exampleToScreen clock ev bPic = do
       backEvent = startOnFire (mainMenu clock ev <$ ffilter (any (isClickedBy extentBack)) ev)
 
   return $ Screen (fmap (<> backButton) bPic) backEvent
+
+tryItOut :: (EvStream t Float -> EvStream t Event -> Hold t (Behavior t Picture)) -> IO ()
+tryItOut fh = runGlossHoldIO (InWindow "Try It Out" (500, 500) (10, 10)) white 60 $ \clock evs -> liftHold $ fh clock (fmap head evs)
 
 drawPlot :: [(Float, Float)] -> Picture
 drawPlot points = color (Gloss.black) . (Gloss.line) $ shiftedPoints

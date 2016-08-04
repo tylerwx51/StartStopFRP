@@ -1,17 +1,17 @@
-{-# LANGUAGE TypeFamilies, FlexibleContexts #-}
+{-# LANGUAGE TypeFamilies, FlexibleContexts, GeneralizedNewtypeDeriving #-}
 module Control.StartStop.Class where
 
+import Control.StartStop.Lib
 import Control.Monad.Fix
 import qualified Control.StartStop.Core as Core
 
-class (MonadFix (Behavior t), Functor (EvStream t), MonadFix (Hold t), MonadFix (PushOnly t)) => StartStopFRP t where
-  type Behavior t :: * -> *
-  type EvStream t :: * -> *
-  type Hold t :: * -> *
-  type PushOnly t :: * -> *
+class (MonadFix (Behavior t), FilterFunctor (EvStream t), MonadFix (Hold t), MonadFix (PushOnly t)) => StartStopFRP t where
+  data Behavior t :: * -> *
+  data EvStream t :: * -> *
+  data Hold t :: * -> *
+  data PushOnly t :: * -> *
 
   never :: EvStream t a
-  catMabyeEs :: EvStream t (Maybe a) -> EvStream t a
   startOnFire :: EvStream t (Hold t a) -> EvStream t a
   mergefEs :: (a -> a -> a) -> EvStream t a -> EvStream t a -> EvStream t a
   coincidence :: EvStream t (EvStream t a) -> EvStream t a
@@ -27,22 +27,21 @@ class (MonadFix (Behavior t), Functor (EvStream t), MonadFix (Hold t), MonadFix 
 
 data Core t
 instance StartStopFRP (Core t) where
-  type Behavior (Core t) = Core.Behavior t
-  type EvStream (Core t) = Core.EvStream t
-  type Hold (Core t) = Core.Hold t
-  type PushOnly (Core t) = Core.PushOnly t
+  newtype Behavior (Core t) a = B { unB :: Core.Behavior t a } deriving(Functor,Applicative,Monad,MonadFix)
+  newtype EvStream (Core t) a = E { unE :: Core.EvStream t a } deriving(Functor, FilterFunctor)
+  newtype Hold (Core t) a = H { unH :: Core.Hold t a } deriving(Functor,Applicative,Monad,MonadFix)
+  newtype PushOnly (Core t) a = P { unP :: Core.PushOnly t a } deriving(Functor,Applicative,Monad,MonadFix)
 
-  never = Core.never
-  catMabyeEs = Core.catMabyeEs
-  startOnFire = Core.startOnFire
-  mergefEs = Core.mergefEs
-  coincidence = Core.coincidence
-  switch = Core.switch
-  holdEs = Core.holdEs
-  unPushes = Core.unPushes
-  pushes = Core.pushes
-  sample = Core.sample
-  sampleAfter = Core.sampleAfter
-  changes = Core.changes
-  unsafePlan = Core.unsafePlan
-  unsafeIOMap = Core.unsafeIOMap
+  never = E Core.never
+  startOnFire = E . Core.startOnFire . fmap unH . unE
+  mergefEs f (E e1) (E e2) = E $ Core.mergefEs f e1 e2
+  coincidence (E ee) = E $ Core.coincidence $ fmap unE ee
+  switch (B b) = E $ Core.switch $ fmap unE b
+  holdEs (E e) iv = H . fmap B $ Core.holdEs e iv
+  unPushes = E . fmap P . Core.unPushes . unE
+  pushes = E . Core.pushes . fmap unP . unE
+  sample = H . Core.sample . unB
+  sampleAfter = H . Core.sampleAfter . unB
+  changes = E . Core.changes . unB
+  unsafePlan = H . fmap E . Core.unsafePlan . unE
+  unsafeIOMap = E . Core.unsafeIOMap . unE

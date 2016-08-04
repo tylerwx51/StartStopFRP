@@ -128,6 +128,11 @@ memoEvs :: EvStream t a -> EvStream t a
 memoEvs Never = Never
 memoEvs (EvStream evs) = EvStream $ memoSample evs
 
+{-
+- TODO : Allow for simultanious events to be stored efficiently, basicly have a list of events instead of
+-        on/off switch.
+-
+-}
 data EvStream t a = Never | EvStream (Sample t (EvInfo t a))
 
 instance Functor (EvStream t) where

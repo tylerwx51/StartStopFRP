@@ -43,15 +43,15 @@ renderButton ex s = color azure bg <> color white fg
   where
     bg = polygon (cornerPoints ex)
     fg = translate x y
+       $ translate (w / 4) (fromIntegral $ floor (negate h / 4))  -- vertically centered, random x offset :(
        $ uscale 0.1
-       $ translate (-180) (-50)  -- vertically centered, random x offset :(
        $ text s
     (x, y) = coord2point (centerCoordOfExtent ex)
+    (w, h) = dimensions ex
 
 
 uscale :: Float -> Picture -> Picture
 uscale v = scale v v
-
 
 coord2point :: Coord -> Point
 coord2point (x,y) = (fromIntegral x, fromIntegral y)
@@ -64,6 +64,10 @@ cornerCoords ex = [(w,n), (e,n), (e,s), (w,s)]
 cornerPoints :: Extent -> [Point]
 cornerPoints = map coord2point . cornerCoords
 
+dimensions :: Extent -> (Float, Float)
+dimensions ex = (fromIntegral (w - e), fromIntegral (n - s))
+  where
+    (n, s, e, w) = takeExtent ex
 
 -- Button events
 
