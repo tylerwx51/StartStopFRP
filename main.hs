@@ -1,4 +1,4 @@
-{-# LANGUAGE BangPatterns, RecursiveDo #-}
+{-# LANGUAGE BangPatterns, RecursiveDo, GeneralizedNewtypeDeriving #-}
 import Control.StartStop.Gloss
 import Control.StartStop.Core
 import Control.StartStop.Lib
@@ -10,14 +10,17 @@ import Graphics.Gloss.Data.Extent
 import Graphics.Gloss.Interface.IO.Game as Gloss
 import Control.Monad.IO.Class
 import Control.Monad.State
-import Data.Foldable
+import Data.Foldable hiding(toList)
 import Data.Traversable
-import Data.Monoid
+import Data.Monoid hiding (Sum(..), Product(..))
 import Buttons
 import Graphics.Rendering.Chart.Easy as Chart hiding(translate, white, scale)
 
 import Data.IORef
 import Data.Maybe
+import Data.Functor.Compose
+import Data.Functor.Sum
+import Data.Functor.Product
 
 reallySeqList :: [a] -> b -> b
 reallySeqList [] = seq []
@@ -51,8 +54,7 @@ decayColorLine vs = foldl' (flip (<>)) mempty $ fmap (\(t, (x, y)) -> color (tim
   bMousePos <- holdEs (filterMapEs getDelta ev) (0,0)
   bTrail <- holdLastNSecs 1.2 clock bMousePos
 
-  return $ fmap decayColorLine bTrail
-  -}
+  return $ fmap decayColorLine bTrail-}
 
 main2 = runGlossHoldIO (InWindow "X-Y Pos" (500, 500) (10, 10)) white 60 $ \tick ev -> do
   let getDelta (EventMotion (dx, dy)) = Just (dx, dy)
@@ -60,14 +62,14 @@ main2 = runGlossHoldIO (InWindow "X-Y Pos" (500, 500) (10, 10)) white 60 $ \tick
 
   bTime <- liftHold $ foldEs' (+) tick 0
   let clock = changes bTime
-  bMousePos <- liftHold $ holdEs (filterMapEs getDelta ev) (0,0)
+  bMousePos <- liftHold $ holdEs (filterMapEs getDelta $ fmap head ev) (0,0)
   bTrail <- liftHold $ holdLastNSecs 1.2 clock bMousePos
 
   let mouseClickEvent (EventKey (MouseButton LeftButton) Up _ _) = Just False
       mouseClickEvent (EventKey (MouseButton LeftButton) Down _ _) = Just True
       mouseClickEvent _ = Nothing
 
-  bMouseState <- liftHold $ holdEs (filterMapEs mouseClickEvent ev) False
+  bMouseState <- liftHold $ holdEs (filterMapEs mouseClickEvent $ fmap head ev) False
 
   let isPEvent (EventKey (Char 'p') Up _ _) = True
       isPEvent _ = False
@@ -78,8 +80,8 @@ main2 = runGlossHoldIO (InWindow "X-Y Pos" (500, 500) (10, 10)) white 60 $ \tick
   let bPlot1 = fmap (plot . Chart.line "Mouse Held" . return) bMousePosData
       bPlot2 = fmap (plot . Chart.line "Mouse Held" . return) bMouseStateData
 
-  plotAtTime "Chart-Gloss.png" (filterEs isPEvent ev) ((>>) <$> bPlot1 <*> bPlot2)
-  planEs $ print "Should plot" <$ filterEs isPEvent ev
+  plotAtTime "Chart-Gloss.png" (filterEs isPEvent $ fmap head ev) ((>>) <$> bPlot1 <*> bPlot2)
+  planEs $ print "Should plot" <$ filterEs isPEvent (fmap head ev)
 
   return $ fmap decayColorLine bTrail
 
@@ -91,58 +93,81 @@ main3 = runGlossHoldIO (InWindow "X-Y Pos" (500, 500) (10, 10)) white 60 $ \tick
                   mouseClickEvent (EventKey (MouseButton LeftButton) Up _ pos) = Just pos
                   mouseClickEvent _ = Nothing
 
-                  mouseClickEvs = filterMapEs mouseClickEvent ev
+                  mouseClickEvs = filterMapEs mouseClickEvent $ fmap head ev
 
               bLastMouseClick <- holdEs mouseClickEvs (0,0)
               let bMouseClickPic = fmap (translate (negate 240) (negate 240) . scale 0.4 0.4 . text . show) bLastMouseClick
 
                   getDelta (EventMotion (dx, dy)) = Just (dx, dy)
                   getDelta _ = Nothing
-              bMousePos <- holdEs (filterMapEs getDelta ev) (0,0)
+              bMousePos <- holdEs (filterMapEs getDelta $ fmap head ev) (0,0)
               bMousePosData <- holdLastNSecs 5 clock (fmap snd bMousePos)
               let bMousePosPic = fmap (translate 0 0 . scale 50 1 . drawPlot) bMousePosData
 
               return $ (<>) <$> bMouseClickPic <*> bMousePosPic
 
+
 data Screen t = Screen { bPic :: Behavior t Picture, bChange :: EvStream t (Screen t) }
 main :: IO ()
-main = runGlossHoldIO (InWindow "X-Y Pos" (500, 500) (10, 10)) white 60 $ \tick ev -> do
-  
-  liftHold $ do
-          (Screen bm buttonPress) <- mainMenu ev
+main = runGlossHoldIO (InWindow "X-Y Pos" (500, 500) (10, 10)) white 60 $ \tick ev -> liftHold $ do
+          bTime <- foldEs (+) tick 0
+          let clock = changes bTime
+          (Screen bm buttonPress) <- mainMenu clock ev
           rec
             let stream = switch active
             active <- holdEs (fmap bChange stream) buttonPress
 
-          bPic2 <- switcher bm $ fmap bPic stream
-          return bPic2
+          switcher bm $ fmap bPic stream
 
 extentClick :: Extent
 extentClick = makeExtent 35 5 (-60) (-140)
 
-extentBack :: Extent
-extentBack = makeExtent 35 5 (-60) (-140)
+extentMouseTracker :: Extent
+extentMouseTracker = makeExtent 35 5 (200-60) (200-140)
 
-mainMenu :: EvStream t Event -> Hold t (Screen t)
-mainMenu ev = do
+mainMenu :: EvStream t Float -> EvStream t [Event] -> Hold t (Screen t)
+mainMenu clock ev = do
   let clickButton = renderButton extentClick "Click Example"
-      clickButtonEvent = filterEs (isClickedBy extentClick) ev
-  return $ Screen (return clickButton) (startOnFire (clickExample ev <$ clickButtonEvent))
+      clickButtonEvent = ffilter (any (isClickedBy extentClick)) ev
+      enterClick = startOnFire ((exampleToScreen clock ev =<< (clickExample ev)) <$ clickButtonEvent)
 
-clickExample :: EvStream t Event -> Hold t (Screen t)
+      mouseTrackButton = renderButton extentMouseTracker "Mouse Tracker"
+      mouseButtonEvent = ffilter (any (isClickedBy extentMouseTracker)) ev
+      enterMouse = startOnFire ((exampleToScreen clock ev =<< (mouseTrackerExample clock ev)) <$ mouseButtonEvent)
+  return $ Screen (return $ clickButton <> mouseTrackButton) (leftmost enterClick enterMouse)
+
+clickExample :: EvStream t [Event] -> Hold t (Behavior t Picture)
 clickExample ev = do
   let mouseClickEvent (EventKey (MouseButton LeftButton) Down _ pos) = Just pos
       mouseClickEvent _ = Nothing
 
-      mouseClickEvs = filterMapEs mouseClickEvent ev
+      mouseClickEvs = filterMap (\xs -> case filterMap mouseClickEvent xs of
+                                          [] -> Nothing
+                                          (x:_) -> Just x) ev
 
   bLastMouseClick <- holdEs mouseClickEvs (0,0)
-  let bMouseClickPic = fmap (translate (negate 240) (negate 240) . scale 0.4 0.4 . text . show) bLastMouseClick
+  return $ fmap (translate (negate 240) (negate 240) . scale 0.4 0.4 . text . show) bLastMouseClick
 
+mouseTrackerExample :: EvStream t Float -> EvStream t [Event] -> Hold t (Behavior t Picture)
+mouseTrackerExample clock ev = do
+
+  let getDelta (EventMotion (dx, dy)) = Just (dx, dy)
+      getDelta _ = Nothing
+
+  bMousePos <- holdEs (filterMap (\xs -> case filterMap getDelta xs of
+                                      [] -> Nothing
+                                      (x:_) -> Just x) ev) (0,0)
+  bMousePosData <- holdLastNSecs 5 clock (fmap snd bMousePos)
+  return $ fmap (translate 0 0 . scale 50 1 . drawPlot) bMousePosData
+
+
+exampleToScreen :: EvStream t Float -> EvStream t [Event] -> Behavior t Picture -> Hold t (Screen t)
+exampleToScreen clock ev bPic = do
+  let extentBack = makeExtent (negate 250 + 35) (negate 250 + 5) (250 - 10) (250 - 90)
       backButton = renderButton extentBack "Back"
-      backEvent = void $ filterEs (isClickedBy extentBack) ev
+      backEvent = startOnFire (mainMenu clock ev <$ ffilter (any (isClickedBy extentBack)) ev)
 
-  return $ Screen (fmap (<> backButton) bMouseClickPic) (startOnFire $ mainMenu ev <$ backEvent)
+  return $ Screen (fmap (<> backButton) bPic) backEvent
 
 drawPlot :: [(Float, Float)] -> Picture
 drawPlot points = color (Gloss.black) . (Gloss.line) $ shiftedPoints
@@ -150,7 +175,8 @@ drawPlot points = color (Gloss.black) . (Gloss.line) $ shiftedPoints
     max_x = maximum $ fmap fst points
     min_x = minimum $ fmap fst points
     shiftedPoints = fmap (\(x,y) -> (x - max_x, y)) points
-
+{-
+-}
 {-
 main = testPlanHold 100000 $ \tick -> liftHold $ do
 

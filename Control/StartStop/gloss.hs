@@ -11,7 +11,7 @@ import Data.IORef
 
 import Graphics.Gloss.Interface.IO.Game
 
-runGlossHoldIO :: Display -> Color -> Int -> (EvStream t Float -> EvStream t Event -> PlanHold t (Behavior t Picture)) -> IO ()
+runGlossHoldIO :: Display -> Color -> Int -> (EvStream t Float -> EvStream t [Event] -> PlanHold t (Behavior t Picture)) -> IO ()
 runGlossHoldIO displayMode bgColor fps bPicture = do
   actionsRef <- newIORef []
   pictureRef <- newIORef undefined
@@ -29,7 +29,7 @@ runGlossHoldIO displayMode bgColor fps bPicture = do
         liftIO $ writeIORef eventTriggerRef eventTrigger
         --liftIO $ writeIORef renderTriggerRef renderTrigger
 
-        bPic <- bPicture (fmap head clock) (fmap head events)
+        bPic <- bPicture (fmap head clock) events
         let renderPic = snapshots bPic clock
         planEs $ flip fmap renderPic $ \pic -> liftIO $ writeIORef pictureRef pic
 

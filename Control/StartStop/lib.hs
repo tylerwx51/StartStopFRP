@@ -112,3 +112,28 @@ debugIO = void . unsafePlan
 
 force :: EvStream t a -> EvStream t a
 force = unsafeIOMap . fmap (\x -> return $! x)
+
+class (Functor f) => FilterFunctor f where
+  filterMap :: (a -> Maybe b) -> f a -> f b
+  {-
+  filterMap Just = id
+  filterMap f . filterMapt g = filterMap (f >=> g)
+  filterMap (Just . f) = fmap f
+  -}
+
+instance FilterFunctor [] where
+  filterMap _ [] = []
+  filterMap f (x:xs) = case f x of
+                        Nothing -> filterMap f xs
+                        Just b -> b : filterMap f xs
+
+instance FilterFunctor (EvStream t) where
+  filterMap = filterMapEs
+
+catMaybes :: (FilterFunctor f) => f (Maybe a) -> f a
+catMaybes = filterMap id
+
+ffilter :: (FilterFunctor f) => (a -> Bool) -> f a -> f a
+ffilter p = filterMap (\v -> boolToMaybe (p v) v)
+  where
+    boolToMaybe b v = if b then Just v else Nothing
