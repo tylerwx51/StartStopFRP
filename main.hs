@@ -70,7 +70,7 @@ main2 = runGlossHoldIO (InWindow "X-Y Pos" (500, 500) (10, 10)) white 60 $ \tick
 
 data Screen t = Screen { bPic :: Behavior t Picture, bChange :: EvStream t (Screen t) }
 main :: IO ()
-main = runGlossHoldIO (InWindow "X-Y Pos" (500, 500) (10, 10)) white 60 $ \tick ev -> liftHold $ do
+main = runGlossHoldIO (InWindow "Examples" (500, 500) (10, 10)) white 60 $ \tick ev -> liftHold $ do
           bTime <- foldEs (+) tick 0
           let clock = changes bTime
           (Screen bm buttonPress) <- mainMenu clock ev
@@ -101,7 +101,7 @@ mainMenu :: EvStream t Float -> EvStream t [Event] -> Hold t (Screen t)
 mainMenu clock ev = do
   let clickButton = renderButton extentClick "Click Example"
       clickButtonEvent = void $ ffilter (any (isClickedBy extentClick)) ev
-      enterClick = startOnFire ((exampleToScreen clock ev =<< (clickExample ev)) <$ clickButtonEvent)
+      enterClick = startOnFire ((exampleToScreen clock ev =<< (clickExample clock ev)) <$ clickButtonEvent)
 
       mouseTrackButton = renderButton extentMouseTracker "Mouse Tracker"
       mouseButtonEvent = void $ ffilter (any (isClickedBy extentMouseTracker)) ev
@@ -113,14 +113,20 @@ mainMenu clock ev = do
 
   return $ Screen (return $ clickButton <> mouseTrackButton <> mouseTrailButton) (foldr1 leftmost [enterClick, enterMouse, enterTrail])
 
-clickExample :: EvStream t [Event] -> Hold t (Behavior t Picture)
-clickExample ev = do
+clickExample :: EvStream t Float -> EvStream t [Event] -> Hold t (Behavior t Picture)
+clickExample _ ev = do
+  -- filter ev down to only the first mouse click event.
   let mouseClickEvs = filterMap (\xs -> case filterMap isMouseClickEvent xs of
                                           [] -> Nothing
                                           (x:_) -> Just x) ev
 
+  -- creates a behavior with a value of the last clicks position
   bLastMouseClick <- holdEs mouseClickEvs (0,0)
-  return $ fmap (translate (negate 240) (negate 240) . scale 0.4 0.4 . text . show) bLastMouseClick
+
+  -- Takes a position and makes a Picture of text with the value of the position
+  let positionToText = translate (negate 240) (negate 240) . scale 0.4 0.4 . text . show
+
+  return $ fmap positionToText bLastMouseClick
 
 mouseTrackerExample :: EvStream t Float -> EvStream t [Event] -> Hold t (Behavior t Picture)
 mouseTrackerExample clock ev = do
