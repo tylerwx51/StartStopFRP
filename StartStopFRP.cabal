@@ -68,7 +68,7 @@ library
   -- Base language which the package is written in.
   default-language:    Haskell2010
 
-executable test
+executable example
   main-is:             main.hs
   build-depends:       base >=4.8 && <4.9, mtl, transformers, gloss > 1.10, gloss-algorithms
                        , Chart, Chart-cairo
