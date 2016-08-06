@@ -82,3 +82,10 @@ executable example
                   -caf-all
                   --rtsopts
                   --"-with-rtsopts=-N -p -s -hy -i0.1"
+
+executable tryItOut
+  main-is:             tryItOutMain.hs
+  build-depends:       base >=4.8 && <4.9, mtl, transformers, gloss > 1.10, gloss-algorithms
+                       , Chart, Chart-cairo
+  extra-lib-dirs:       /usr/lib
+  default-language:    Haskell2010

@@ -101,7 +101,7 @@ mainMenu :: EvStream t Float -> EvStream t [Event] -> Hold t (Screen t)
 mainMenu clock ev = do
   let clickButton = renderButton extentClick "Click Example"
       clickButtonEvent = void $ ffilter (any (isClickedBy extentClick)) ev
-      enterClick = startOnFire ((exampleToScreen clock ev =<< (clickExample clock ev)) <$ clickButtonEvent)
+      enterClick = startOnFire ((exampleToScreen clock ev =<< (clickExample ev)) <$ clickButtonEvent)
 
       mouseTrackButton = renderButton extentMouseTracker "Mouse Tracker"
       mouseButtonEvent = void $ ffilter (any (isClickedBy extentMouseTracker)) ev
@@ -113,8 +113,8 @@ mainMenu clock ev = do
 
   return $ Screen (return $ clickButton <> mouseTrackButton <> mouseTrailButton) (foldr1 leftmost [enterClick, enterMouse, enterTrail])
 
-clickExample :: EvStream t Float -> EvStream t [Event] -> Hold t (Behavior t Picture)
-clickExample _ ev = do
+clickExample :: EvStream t [Event] -> Hold t (Behavior t Picture)
+clickExample ev = do
   -- filter ev down to only the first mouse click event.
   let mouseClickEvs = filterMap (\xs -> case filterMap isMouseClickEvent xs of
                                           [] -> Nothing
@@ -126,6 +126,7 @@ clickExample _ ev = do
   -- Takes a position and makes a Picture of text with the value of the position
   let positionToText = translate (negate 240) (negate 240) . scale 0.4 0.4 . text . show
 
+  -- return a behavior whos current value is the current screen to draw.
   return $ fmap positionToText bLastMouseClick
 
 mouseTrackerExample :: EvStream t Float -> EvStream t [Event] -> Hold t (Behavior t Picture)
