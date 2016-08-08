@@ -1,4 +1,4 @@
-{-# LANGUAGE MultiParamTypeClasses, FlexibleInstances, GeneralizedNewtypeDeriving, DoAndIfThenElse, ScopedTypeVariables, BangPatterns #-}
+{-# LANGUAGE MultiParamTypeClasses, FlexibleInstances, GeneralizedNewtypeDeriving, DoAndIfThenElse, ScopedTypeVariables #-}
 module Control.StartStop.Core where
 
 import Control.Applicative
@@ -6,6 +6,7 @@ import Control.Monad.Reader
 import Control.Monad.Writer.Strict
 
 import Data.IORef
+import Control.Concurrent.MVar
 
 import System.IO.Unsafe
 
@@ -140,26 +141,32 @@ instance Functor (EvStream t) where
   fmap f (EvStream evs) = memoEvs $ EvStream $ fmap (fmap f) evs
 
 unsafeHoldIOSequence :: EvStream t (HoldIO t a) -> IO (EvStream t a)
-unsafeHoldIOSequence Never = return Never
-unsafeHoldIOSequence (EvStream emio) = do
-  ref <- liftIO $ newIORef Nothing
-  let unsafeEvs = do
+unsafeHoldIOSequence evs = do
+  ref <- liftIO $ newMVar Nothing
+  let unsafeEvs emio = EvStream $ do
         curTime <- ask
-        mOld <- liftIO $ readIORef ref
+        mOld <- liftIO $ takeMVar ref
         case mOld of
           Just (t, v, p)
-            | t == curTime -> return $ FiredNow v p
+            | t == curTime -> do
+              liftIO $ putMVar ref mOld
+              return $ FiredNow v p
+            | t > curTime -> error "Invariant Broken."
           _ -> do
             mio <- emio
             case mio of
-              NotFired -> return NotFired
+              NotFired -> do
+                liftIO $ putMVar ref Nothing
+                return NotFired
               FiredNow hiov p -> do
                 (v, pv) <- runPushesIO hiov
                 t <- ask
-                liftIO $ writeIORef ref (Just (t, v, p <> pv))
+                liftIO $ putMVar ref (Just (t, v, p <> pv))
                 return $ FiredNow v p
 
-  return $ EvStream unsafeEvs
+  return $ case evs of
+            Never -> Never
+            EvStream emio -> unsafeEvs emio
 
 unsafeIOSequence :: EvStream t (IO a) -> IO (EvStream t a)
 unsafeIOSequence = unsafeHoldIOSequence . fmap liftIO
@@ -501,9 +508,7 @@ holdEs evs iv = Hold $ do
           Never -> return NotFired
           (EvStream effs) -> effs
 
-  -- toPush can't be made with unsafeHoldIOSequence because
-  -- it disallows for use of mfix
-  let toPush = catMabyeEs $ unsafeHoldIOMap $ flip fmap (listenPushes evs) $ \(a, p) -> HoldIO $ do
+  toPush <- liftIO $ fmap catMabyeEs $ unsafeHoldIOSequence $ flip fmap (listenPushes evs) $ \(a, p) -> HoldIO $ do
                                 t <- ask
                                 if startTime == t
                                 then return Nothing
@@ -533,7 +538,8 @@ switch bevs = EvStream $ do
 
 {-# NOINLINE unsafeHoldIOMap #-}
 unsafeHoldIOMap :: EvStream t (HoldIO t a) -> EvStream t a
-unsafeHoldIOMap = unsafePerformIO . unsafeHoldIOSequence
+unsafeHoldIOMap Never = Never
+unsafeHoldIOMap evs = unsafePerformIO . unsafeHoldIOSequence $ evs
 
 unsafeIOMap :: EvStream t (IO a) -> EvStream t a
 unsafeIOMap = unsafeHoldIOMap . fmap liftIO
