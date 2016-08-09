@@ -30,10 +30,10 @@ runGlossHoldIO displayMode bgColor fps bPicture = do
         --liftIO $ writeIORef renderTriggerRef renderTrigger
 
         bPic <- bPicture (fmap head clock) events
-        let renderPic = snapshots bPic clock
+        let renderPic = startOnFire $ sampleAfter bPic <$ clock
         planEs $ flip fmap renderPic $ \pic -> liftIO $ writeIORef pictureRef pic
 
-        inital <- liftHold $ sample bPic
+        inital <- liftHold $ sampleAfter bPic
         liftIO $ writeIORef pictureRef inital
         return ()
 

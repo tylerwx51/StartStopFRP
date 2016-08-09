@@ -174,9 +174,6 @@ unsafeIOSequence = unsafeHoldIOSequence . fmap liftIO
 listenPushes :: EvStream t a -> EvStream t (a, Pushes t)
 listenPushes = pushes . fmap listen . unPushes
 
-type VoidEvent t = Sample t (Maybe Time) -- Void events fire and then return the time right before they fired
-                                         -- at all time past that time.
-
 data BehaviorInfo t a = BehaviorInfo { currentVal :: !a -- the current value of the behavior
                                      , futureInfo :: Sample t (EvInfo t (BehaviorInfo t a))
                                      -- let the current time be t, and let t' be "just after t".
@@ -184,23 +181,18 @@ data BehaviorInfo t a = BehaviorInfo { currentVal :: !a -- the current value of 
                                      -- for the behavior b at t'. This allows the ability to be able to
                                      -- as if behaviors immediatly started holding there value. It also
                                      -- helps with memoization.
-                                     , changeTime :: VoidEvent t
-                                     -- a void event that fires when the current value is no longer
-                                     -- the current value. This is used to greatly improve the power
-                                     -- of memoization
+                                     , lastChangeTime :: Sample t (Maybe Time)
+                                     -- lastChangeTime returns the value of when the last change to
+                                     -- the behavior occured.
                                      }
 
-firstTime :: VoidEvent t -> VoidEvent t -> VoidEvent t
-firstTime smt1 smt2 = do
-  mt1 <- smt1
-  mt2 <- smt2
-  case (mt1, mt2) of
-    (Nothing, Nothing) -> return Nothing
-    (Just lt, Nothing) -> return $ Just lt
-    (Nothing, Just rt) -> return $ Just rt
-    (Just lt, Just rt)
-      | lt <= rt -> return $ Just lt
-      | rt < lt -> return $ Just rt
+mostRecent :: Sample t (Maybe Time) -> Sample t (Maybe Time) -> Sample t (Maybe Time)
+mostRecent smt1 smt2 = maxOfJust <$> smt1 <*> smt2
+  where
+    maxOfJust Nothing (Just tl) = Just tl
+    maxOfJust (Just tr) Nothing = Just tr
+    maxOfJust (Just tl) (Just tr) = Just (max tl tr)
+    maxOfJust Nothing Nothing = Nothing
 
 data Behavior t a = BConst a | Behavior (Hold t (BehaviorInfo t a))
 
@@ -261,36 +253,36 @@ usePrevB currentValRef futureRef bToMemo = Behavior $ Hold $ do
         checkFutureRefValid = do
           curTime <- ask
           mtfuture <- liftIO $ readIORef futureRef
+
           case mtfuture of
-            Just (tf', bInfo', p')
-              | tf' /= curTime -> do
-                ct' <- lift $ changeTime bInfo'
-                case ct' of
-                  Just ft'
-                    | ft' < curTime -> reRun
-                  _ -> do
-                    liftIO $ writeIORef currentValRef $ Just (curTime, bInfo', p')
-                    tell p'
-                    return bInfo'
+            Just (tf', bInfo', p') -> do
+                mct' <- lift $ lastChangeTime bInfo'
+                case mct' of
+                  Just ct'
+                    | tf' == ct' -> do
+                      liftIO $ writeIORef currentValRef $ Just (curTime, bInfo', p')
+                      liftIO $ writeIORef futureRef Nothing
+                      tell p'
+                      return bInfo'
+                  _ -> reRun
             _ -> reRun
 
     {-
     - checks to see if currentValRef if it is valid. If it is still valid, it
     - uses that as the value of the behavior. If it is not it checkFutureRefValid
     -}
-    curTime <- ask
     mtv <- liftIO $ readIORef currentValRef
 
     case mtv of
       Nothing -> reRun
       Just (t, bInfo, p) -> do
-        ct <- lift $ changeTime bInfo
-        case ct of
-          Just t'
-            | t' < curTime -> checkFutureRefValid
-          _ -> do
-            tell p
-            return bInfo
+        mct <- lift $ lastChangeTime bInfo
+        case mct of
+          Just ct
+            | ct < t -> do
+              tell p
+              return bInfo
+          _ -> checkFutureRefValid
 
 instance Functor (Behavior t) where
   fmap = liftM
@@ -299,14 +291,6 @@ instance Applicative (Behavior t) where
   pure = return
   (<*>) = ap
 
-leftMostChange :: Sample t (EvInfo t a) -> Sample t (EvInfo t a) -> Sample t (EvInfo t a)
-leftMostChange se1 se2 = do
-  e1 <- se1
-
-  case e1 of
-    NotFired -> se2
-    FiredNow a pa -> return $ FiredNow a pa
-
 instance Monad (Behavior t) where
   return = BConst
   (BConst a) >>= f = f a
@@ -314,7 +298,7 @@ instance Monad (Behavior t) where
     (BehaviorInfo a sFutureA sta) <- runB bh
     (BehaviorInfo b sFutureB stb) <- runB (f a)
 
-    let sFutureF sFutureA = do
+    let sFutureF sFutureA sFutureB = do
           futureA <- sFutureA
 
           case futureA of
@@ -323,26 +307,13 @@ instance Monad (Behavior t) where
               (bInfo@(BehaviorInfo b' sFutureB' stb'), pb') <- runWriterT . unHold $ runB $ f a'
               futureB' <- sFutureB'
               case futureB' of
-                NotFired -> return $ FiredNow (BehaviorInfo b' (leftMostChange (sFutureF sFutureA') sFutureB') (firstTime sta' stb')) (pa' <> pb')
-                FiredNow (BehaviorInfo fb' sFutureFB' stfb') pfb' -> return $ FiredNow (BehaviorInfo fb' sFutureFB' (firstTime sta' stfb')) (pa' <> pb' <> pfb')
+                NotFired -> return $ FiredNow (BehaviorInfo b' (sFutureF sFutureA' sFutureB') (mostRecent sta' stb')) (pa' <> pb')
+                FiredNow (BehaviorInfo fb' sFutureFB' stfb') pfb' -> return $ FiredNow (BehaviorInfo fb' sFutureFB' (mostRecent sta' (mostRecent stb' stfb'))) (pa' <> pb' <> pfb')
 
-    return $ BehaviorInfo b (sFutureF sFutureA) (firstTime sta stb)
+    return $ BehaviorInfo b (sFutureF sFutureA sFutureB) (mostRecent sta stb)
 
 instance MonadFix (Behavior t) where
   mfix f = Behavior $ mfix (\(~(BehaviorInfo a _ _)) -> runB $ f a)
-
-newVoidEvent :: IO (VoidEvent t, Time -> IO ())
-newVoidEvent = do
-  ct <- newIORef Nothing
-
-  let sct = do
-        curTime <- ask
-        mt <- liftIO $ readIORef ct
-        case mt of
-          Just t -> return $ Just t
-          Nothing -> return Nothing
-
-  return (sct, writeIORef ct . Just)
 
 newtype Plans t = Plans (EvStream t ())
 
@@ -376,6 +347,9 @@ planEs evs = PlanHold $ do
 class (Monad (m t)) => MonadHold m t where
   liftHold :: Hold t a -> m t a
   --sample :: m t a
+
+instance MonadHold Hold t where
+  liftHold = id
 
 instance MonadHold HoldIO t where
   liftHold (Hold rw) = HoldIO rw
@@ -493,39 +467,33 @@ holdEs :: EvStream t a -> a -> Hold t (Behavior t a)
 --holdEs Never iv = return (return iv) -- can't do because bad use with mfix
 holdEs evs iv = Hold $ do
   startTime <- ask
+  ref <- liftIO $ newIORef (iv, mempty, Nothing)
 
-  (oTime, trigger) <- liftIO newVoidEvent
-  ref <- liftIO $ newIORef (iv, mempty, oTime, trigger)
-
-  let pushAction t newVal subEffects sct trigger = do
-        (_, _, _, oldTrigger) <- readIORef ref
-        oldTrigger t
-        writeIORef ref (newVal, subEffects, sct, trigger)
+  let pushAction t newVal subEffects = writeIORef ref (newVal, subEffects, Just t)
 
       subPushes = Pushes $ EvStream $ do
-        (_, Pushes evEffs, _, _) <- liftIO (readIORef ref)
+        (_, Pushes evEffs, _) <- liftIO (readIORef ref)
         case evEffs of
           Never -> return NotFired
           (EvStream effs) -> effs
 
-  toPush <- liftIO $ fmap catMabyeEs $ unsafeHoldIOSequence $ flip fmap (listenPushes evs) $ \(a, p) -> HoldIO $ do
+      toPush = catMabyeEs $ startOnFire $ flip fmap (listenPushes evs) $ \(a, p) -> Hold $ do
                                 t <- ask
                                 if startTime == t
                                 then return Nothing
-                                else do
-                                  (newCT, trigger) <- liftIO newVoidEvent
-                                  return $ Just (t, a, p, newCT, trigger)
+                                else return $ Just (t, a, p)
 
-  tell $ Pushes $ (\(t, a, p, ct, trigger) -> pushAction t a p ct trigger) <$> toPush
+  tell $ Pushes $ (\(t, a, p) -> pushAction t a p) <$> toPush
   tell subPushes
 
   return $ Behavior $ Hold $ do
-    (v, effects, sct, _) <- liftIO $ readIORef ref
+    (v, effects, _) <- liftIO $ readIORef ref
     tell effects
-    let sFuture = case toPush of
+    let lastChange = lift $ (\(_,_,sct) -> sct) <$> readIORef ref
+        sFuture = case toPush of
                     Never -> return NotFired
-                    EvStream mToPush -> fmap (fmap (\(_,v,_,sct',_) -> BehaviorInfo v sFuture sct')) mToPush
-    return $ BehaviorInfo v sFuture sct
+                    EvStream mToPush -> fmap (fmap (\(_,v,_) -> BehaviorInfo v sFuture lastChange)) mToPush
+    return $ BehaviorInfo v sFuture lastChange
 
 {- Creates a event stream that fires whenever the current event stream fires. -}
 switch :: Behavior t (EvStream t a) -> EvStream t a
