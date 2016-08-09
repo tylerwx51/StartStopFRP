@@ -183,7 +183,7 @@ data BehaviorInfo t a = BehaviorInfo { currentVal :: !a -- the current value of 
                                      -- helps with memoization.
                                      , lastChangeTime :: Sample t (Maybe Time)
                                      -- lastChangeTime returns the value of when the last change to
-                                     -- the behavior occured.
+                                     -- the behavior occured. It will be updated at the same time the value changes
                                      }
 
 mostRecent :: Sample t (Maybe Time) -> Sample t (Maybe Time) -> Sample t (Maybe Time)
@@ -259,7 +259,7 @@ usePrevB currentValRef futureRef bToMemo = Behavior $ Hold $ do
                 mct' <- lift $ lastChangeTime bInfo'
                 case mct' of
                   Just ct'
-                    | tf' == ct' -> do
+                    | tf' == ct' -> do -- Since futureRef can only be grabbed on the round it changes,
                       liftIO $ writeIORef currentValRef $ Just (curTime, bInfo', p')
                       liftIO $ writeIORef futureRef Nothing
                       tell p'
@@ -463,6 +463,7 @@ changes b = EvStream $ do
   (BehaviorInfo _ sfa _, _) <- runWriterT . unHold $ runB b
   fmap currentVal <$> sfa
 
+{- Creates a behavior whos value is the most recent (not currently occuring) event's value. -}
 holdEs :: EvStream t a -> a -> Hold t (Behavior t a)
 --holdEs Never iv = return (return iv) -- can't do because bad use with mfix
 holdEs evs iv = Hold $ do
