@@ -194,15 +194,10 @@ mostRecent smt1 smt2 = maxOfJust <$> smt1 <*> smt2
     maxOfJust (Just tl) (Just tr) = Just (max tl tr)
     maxOfJust Nothing Nothing = Nothing
 
-data Behavior t a = BConst a | Behavior (Hold t (BehaviorInfo t a))
-
-runB :: Behavior t a -> Hold t (BehaviorInfo t a)
-runB (BConst x) = return $ BehaviorInfo x (return NotFired) (return Nothing)
-runB (Behavior hbi) = hbi
+data Behavior t a = Behavior { runB :: Hold t (BehaviorInfo t a) }
 
 {-# NOINLINE memoB #-}
 memoB :: Behavior t a -> Behavior t a
-memoB (BConst x) = BConst x
 memoB b = unsafePerformIO $ do
   ref <- newIORef Nothing -- stores the value of right now
   futureRef <- newIORef Nothing -- stores the value of the upper limit of now
@@ -292,8 +287,7 @@ instance Applicative (Behavior t) where
   (<*>) = ap
 
 instance Monad (Behavior t) where
-  return = BConst
-  (BConst a) >>= f = f a
+  return x = Behavior $ return $ BehaviorInfo x (return NotFired) (return Nothing)
   bh >>= f = memoB $ Behavior $ do
     (BehaviorInfo a sFutureA sta) <- runB bh
     (BehaviorInfo b sFutureB stb) <- runB (f a)
@@ -448,7 +442,6 @@ sample = fmap currentVal . runB
 
 {- give the value of the behavior "just after" the current time. -}
 sampleAfter :: Behavior t a -> Hold t a
-sampleAfter (BConst x) = return x
 sampleAfter b = Hold $ do
   (BehaviorInfo a sfa _, p) <- lift $ runWriterT . unHold $ runB b
   fa <- lift sfa
@@ -458,7 +451,6 @@ sampleAfter b = Hold $ do
 
 {- Whenever the behavior changes value, the produced event stream fires-}
 changes :: Behavior t a -> EvStream t a
-changes (BConst _) = never
 changes b = EvStream $ do
   (BehaviorInfo _ sfa _, _) <- runWriterT . unHold $ runB b
   fmap currentVal <$> sfa
@@ -498,7 +490,6 @@ holdEs evs iv = Hold $ do
 
 {- Creates a event stream that fires whenever the current event stream fires. -}
 switch :: Behavior t (EvStream t a) -> EvStream t a
-switch (BConst evs) = evs
 switch bevs = EvStream $ do
   (BehaviorInfo me _ _, _) <- runWriterT . unHold $ runB bevs
   case me of
