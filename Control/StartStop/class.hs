@@ -25,6 +25,7 @@ class (MonadFix (Behavior t), FilterFunctor (EvStream t), MonadFix (Hold t), Mon
   unsafePlan :: EvStream t (IO a) -> Hold t (EvStream t a)
   unsafeIOMap :: EvStream t (IO a) -> EvStream t a
 
+
 data Core t
 instance StartStopFRP (Core t) where
   newtype Behavior (Core t) a = B { unB :: Core.Behavior t a } deriving(Functor,Applicative,Monad,MonadFix)

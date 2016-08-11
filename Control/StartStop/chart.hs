@@ -45,7 +45,7 @@ runTest = testPlanHold 101 $ \evs -> do
   b <- liftHold $ holdEs (fmap (\t -> sin (fromInteger t/10) :: Float) evs) 0
   time <- liftHold $ holdEs evs 0
   bPlot <- liftHold $ plotEvStream (fmap fromInteger time) (changes b)
-  plotAtTime "test.png" (filterEs (==100) evs) bPlot
+  plotAtTime "test.png" (ffilter (==100) evs) bPlot
   return $ return ""
 
 readMeExample1 :: IO ()
@@ -53,5 +53,5 @@ readMeExample1 = testPlanHold 101 $ \evs -> do
   b <- liftHold $ holdEs (fmap (\x -> x * x) evs) 0
   time <- liftHold $ holdEs evs 0
   bPlot <- liftHold $ smoothPlot time b
-  plotAtTime "Ex1.png" (filterEs (==100) evs) bPlot
+  plotAtTime "Ex1.png" (ffilter (==100) evs) bPlot
   return $ return ""

@@ -1,54 +1,53 @@
-{-# LANGUAGE RecursiveDo, TypeFamilies, GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE TypeFamilies, GeneralizedNewtypeDeriving, FlexibleInstances #-}
 module Control.StartStop.TestFun where
 
 import Control.StartStop.Core (Time(..))
-import Control.StartStop.Class
+import Control.StartStop.Class hiding(E,B,H,P,unE,unB,unH,unP)
+import Control.StartStop.Lib (FilterFunctor, filterMap)
 import Control.Monad.Identity
 import Control.Monad.Reader
 import Control.Monad.Writer.Strict
 import Data.IORef
 import Data.Maybe
 
-runTestHold :: H (B a) -> [a]
+runTestHold :: Hold Test (Behavior Test a) -> [a]
 runTestHold thb = fmap (b . T) [0 ..]
   where (B b) = unH thb (T 0)
 
-listEvs :: Integer -> E a -> [(Time, a)]
+listEvs :: Integer -> EvStream Test a -> [(Time, a)]
 listEvs maxTime (E ev) = catMaybes $ do
   t <- fmap T [0..maxTime]
   let mv = ev t
   return $ (\v -> (t, v)) <$> mv
 
-listToEv :: [(Time, a)] -> E a
+listToEv :: [(Time, a)] -> EvStream Test a
 listToEv vs = E $ \t -> lookup t vs
 
-lastFired :: Time -> E a -> Maybe (Time, a)
+lastFired :: Time -> EvStream Test a -> Maybe (Time, a)
 lastFired (T (-1)) _ = Nothing
 lastFired t@(T i) (E ev) = case ev t of
                   Nothing -> lastFired (T (i - 1)) (E ev)
                   Just v -> Just (t, v)
 
+
+instance Functor (EvStream Test) where
+  fmap f es = E $ \t -> f <$> unE es t
+
+instance FilterFunctor (EvStream Test) where
+  filterMap f es = E $ unE es >=> f
+
 data Test
-
-newtype E a = E { unE :: Time -> Maybe a }
-newtype B a = B { unB :: Time -> a } deriving (Functor, Applicative, Monad, MonadFix)
-newtype H a = H { unH :: Time -> a } deriving (Functor, Applicative, Monad, MonadFix)
-
-instance Functor E where
-  fmap f (E e) = E $ e >=> Just . f
-
 instance StartStopFRP Test where
-  type EvStream Test = E
-  type Behavior Test = B
-  type Hold Test = H
-  type PushOnly Test = Identity
+  newtype EvStream Test a = E { unE :: Time -> Maybe a }
+  newtype Behavior Test a = B { unB :: Time -> a } deriving (Functor, Applicative, Monad, MonadFix)
+  newtype Hold Test a = H { unH :: Time -> a } deriving (Functor, Applicative, Monad, MonadFix)
+  newtype PushOnly Test a = P { unP :: Identity a } deriving (Functor, Applicative, Monad, MonadFix)
 
   never = E $ const Nothing
   switch b = E $ \t -> unE (unB b t) t
-  catMabyeEs (E ev) = E $ join . ev
   coincidence (E ev) = E $ \t -> ev t >>= \(E e2) -> e2 t
-  unPushes = fmap Identity
-  pushes = fmap runIdentity
+  unPushes = fmap (P . Identity)
+  pushes = fmap (runIdentity . unP)
   holdEs evs iv = H $ \startTime -> B $ \(T i) -> case lastFired (T (i - 1)) evs of
                                       Just (t',v)
                                         | startTime < t' -> v

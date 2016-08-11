@@ -1,18 +1,15 @@
- {-# LANGUAGE RecursiveDo, DoAndIfThenElse, TypeFamilies, FlexibleContexts, ExistentialQuantification, GeneralizedNewtypeDeriving #-}
+ {-# LANGUAGE RecursiveDo, DoAndIfThenElse, TypeFamilies, FlexibleContexts, ExistentialQuantification #-}
 module Control.StartStop.Lib where
 
 import Control.StartStop.Core
-import Control.Monad.Reader
-import Control.Monad.Writer.Strict
-
-import Data.IORef
+import Control.Monad
 
 
 {- Starts the given hold, if its returned value is not Nothing. This is
    equivalent to "catMabyeEs . startOnFire".
 -}
 pull :: EvStream t (Hold t (Maybe a)) -> EvStream t a
-pull = catMabyeEs . startOnFire
+pull = catMaybes . startOnFire
 
 {-
 - slight performance improvement over mergefEs in a few cases. Basicly used for
@@ -27,33 +24,10 @@ mergefpEs f el er = pushes $ mergefEs f (unPushes el) (unPushes er)
 leftmost :: EvStream t a -> EvStream t a -> EvStream t a
 leftmost = mergefpEs const
 
-{-
-- For each event that is fired, the function is applied, the new
-- EvStream fires if "f a" matches "Just b" and fires with a value of b.
-- Is a combo of fmap and filterEs.
--
-- e1 = [(1,"a"), (3,"bb"), (7, "ccc")]
-- filterMapEs (\str -> if length str > 1 then Just (str ++ "!") else Nothing) == [(3, "bb!"), (7, "ccc!")]
--
-- filterMapEs Just = id
-- filterMapEs f . filterMapEs g = filterMapEs (f >=> g)
--}
-filterMapEs :: (a -> Maybe b) -> EvStream t a -> EvStream t b
-filterMapEs f = pull . fmap (return . f)
-
-{-
-- Removes any values that when p is applied to the value of the event is False.
--}
-filterEs :: (a -> Bool) -> EvStream t a -> EvStream t a
-filterEs p = filterMapEs boolToJust
-  where
-    boolToJust v = if p v then Just v else Nothing
-
-
 {- If two events fire at the same exact time apply ef to ea-}
 data EitherBoth a b = EBLeft a | EBRight b | EBBoth a b
 applyEs :: EvStream t (a -> b) -> EvStream t a -> EvStream t b
-applyEs ef ea = filterMapEs (\e -> case e of
+applyEs ef ea = filterMap (\e -> case e of
                                     EBBoth f a -> Just (f a)
                                     _ -> Nothing) $ mergefEs (\(EBLeft f) (EBRight a) -> EBBoth f a) (fmap EBLeft ef) (fmap EBRight ea)
 
@@ -127,8 +101,20 @@ instance FilterFunctor [] where
                         Nothing -> filterMap f xs
                         Just b -> b : filterMap f xs
 
+
+{-
+- For each event that is fired, the function is applied, the new
+- EvStream fires if "f a" matches "Just b" and fires with a value of b.
+- Is a combo of fmap and filterEs.
+-
+- e1 = [(1,"a"), (3,"bb"), (7, "ccc")]
+- filterMapEs (\str -> if length str > 1 then Just (str ++ "!") else Nothing) == [(3, "bb!"), (7, "ccc!")]
+-
+- filterMapEs Just = id
+- filterMapEs f . filterMapEs g = filterMapEs (f >=> g)
+-}
 instance FilterFunctor (EvStream t) where
-  filterMap = filterMapEs
+  filterMap f = catMaybeEs . fmap f
 
 catMaybes :: (FilterFunctor f) => f (Maybe a) -> f a
 catMaybes = filterMap id

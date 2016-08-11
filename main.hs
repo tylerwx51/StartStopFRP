@@ -139,7 +139,7 @@ mouseTrackerExample clock ev = do
 
 mouseTrailExample :: EvStream t Float -> EvStream t [Event] -> Hold t (Behavior t Picture)
 mouseTrailExample clock ev = do
-  bMousePos <- holdEs (filterMapEs (\xs -> case filterMap isMouseChange xs of
+  bMousePos <- holdEs (filterMap (\xs -> case filterMap isMouseChange xs of
                                       [] -> Nothing
                                       (x:_) -> Just x) ev) (0,0)
   bTrail <- holdLastNSecs 1.2 clock bMousePos

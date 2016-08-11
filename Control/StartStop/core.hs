@@ -411,9 +411,9 @@ startOnFire (EvStream me) = EvStream $ do
 - an EvStream that fires when ever the sorce fires with the value of Just a.
 - The EvStream fires with a value of a.
 -}
-catMabyeEs :: EvStream t (Maybe a) -> EvStream t a
-catMabyeEs Never = Never
-catMabyeEs (EvStream me) = EvStream $ do
+catMaybeEs :: EvStream t (Maybe a) -> EvStream t a
+catMaybeEs Never = Never
+catMaybeEs (EvStream me) = EvStream $ do
   eInfo <- me
   case eInfo of
     NotFired -> return NotFired
@@ -457,7 +457,6 @@ changes b = EvStream $ do
 
 {- Creates a behavior whos value is the most recent (not currently occuring) event's value. -}
 holdEs :: EvStream t a -> a -> Hold t (Behavior t a)
---holdEs Never iv = return (return iv) -- can't do because bad use with mfix
 holdEs evs iv = Hold $ do
   startTime <- ask
   ref <- liftIO $ newIORef (iv, mempty, Nothing)
@@ -470,7 +469,7 @@ holdEs evs iv = Hold $ do
           Never -> return NotFired
           (EvStream effs) -> effs
 
-      toPush = catMabyeEs $ startOnFire $ flip fmap (listenPushes evs) $ \(a, p) -> Hold $ do
+      toPush = catMaybeEs $ startOnFire $ flip fmap (listenPushes evs) $ \(a, p) -> Hold $ do
                                 t <- ask
                                 if startTime == t
                                 then return Nothing
