@@ -13,6 +13,7 @@ import Data.IORef
 main :: IO ()
 main = testHold 100000 $ return (return "")
 -}
+
 testPlanHold :: Integer -> (EvStream t Integer -> PlanHold t (Behavior t String)) -> IO ()
 testPlanHold n eHold = do
   actionsRef <- newIORef []
@@ -82,53 +83,72 @@ testFunUnsafe = EvStream . impl
         Nothing -> return NotFired
         Just v -> return $ FiredNow v mempty
 
-testHold :: (Show a) => Integer -> Hold t (Behavior t a) -> IO ()
+testPushStream :: (EvStream t Integer -> PushStream t) -> IO ()
+testPushStream f = do
+  let evs = EvStream $ ask >>= \(T i) -> return (return i)
+      pushes = f evs
+
+      loop i PNever = return ()
+      loop i (Pls s) = do
+        (pInfo, next) <- runReaderT s (T i)
+        case pInfo of
+          PNotFired -> return ()
+          PFired io -> io
+        loop (i + 1) next
+
+  loop 0 pushes
+
+testHold :: (Show a) => Integer -> (EvStream t Integer -> Hold t (Behavior t a)) -> IO ()
 testHold numRounds hb = do
-  (b, Pushes pushes) <- runReaderT (runWriterT . unHold $ hb) (T 0)
+  (b, pushes) <- runReaderT (runWriterT . unHold $ hb (EvStream $ ask >>= \(T t) -> return (return t))) (T 0)
   loop 0 pushes b
   where
-    loop :: (Show a) => Integer -> EvStream t (IO ()) -> Behavior t a -> IO ()
-    loop i (EvStream mPush) b = when (i < numRounds) $ do
+    loop :: (Show a) => Integer -> PushStream t -> Behavior t a -> IO ()
+    loop _ PNever _ = return ()
+    loop !i (Pls mPush) b = do
 
       (v, _) <- runReaderT (runWriterT . unHold $ sample b) (T i)
-      liftIO $ print (i, v)
+      --liftIO $ print (i, v)
 
-      didPush <- runReaderT mPush (T i)
+      (didPush, nextPush) <- runReaderT mPush (T i)
 
       case didPush of
-        NotFired -> loop (i + 1) (EvStream mPush) b
-        FiredNow ioAction _ -> do
-          ioAction
-          loop (i + 1) (EvStream mPush) b
+        PNotFired -> return ()
+        PFired ioAction -> ioAction
+
+      when (i < numRounds) $ loop (i + 1) nextPush b
 
 holdProgressive :: Hold t (Behavior t a) -> IO (IO a)
 holdProgressive hb = do
   clockRef <- newIORef (T 0)
 
-  rec
-    let pushesSample = case pushesEv of
-                          Never -> return NotFired
-                          EvStream me -> me
+  (b, pushes) <- runReaderT (runWriterT . unHold $ hb) (T 0)
+  streamRef <- newIORef pushes
 
-        next = do
-          t <- readIORef clockRef
-          eioaction <- runReaderT pushesSample t
-          case eioaction of
-            NotFired -> return ()
-            FiredNow ioaction _ -> ioaction
+  let next = do
+        t <- readIORef clockRef
+        pushes <- readIORef streamRef
+        case pushes of
+          PNever -> return ()
+          Pls sEInfo -> do
+            (eioaction, nextStream) <- runReaderT sEInfo t
+            case eioaction of
+              PNotFired -> return ()
+              PFired ioaction -> ioaction
 
-          (bInfo, _) <- runReaderT (runWriterT $ unHold $ runB b) t
+            writeIORef streamRef nextStream
 
-          modifyIORef clockRef (\(T i) -> T $ i + 1)
-          return $ currentVal bInfo
+        (bInfo, _) <- runReaderT (runWriterT $ unHold $ runB b) t
 
-    (b, Pushes pushesEv) <- runReaderT (runWriterT . unHold $ hb) (T 0)
+        modifyIORef clockRef (\(T i) -> T $ i + 1)
+        return $ currentVal bInfo
 
   return next
 
 initPlanHold :: (IO () -> IO ()) -> PlanHold t () -> IO ()
 initPlanHold scheduleAction ph = do
   clockRef <- newIORef (T 0)
+  streamRef <- newIORef PNever
 
   rec
     let env = Env (readIORef clockRef) (scheduleAction loop)
@@ -137,20 +157,23 @@ initPlanHold scheduleAction ph = do
                         Never -> return NotFired
                         EvStream me -> me
 
-        pushesSample = case pushesEv of
-                          Never -> return NotFired
-                          EvStream me -> me
-
         loop = do
           t <- readIORef clockRef
-          runReaderT planSample t
-          eioaction <- runReaderT pushesSample t
-          case eioaction of
-            NotFired -> return ()
-            FiredNow ioaction _ -> ioaction
+          pushes <- readIORef streamRef
+          case pushes of
+            PNever -> return ()
+            (Pls pushesSample) -> do
+              runReaderT planSample t
+              (eioaction, nextPushes)  <- runReaderT pushesSample t
+              case eioaction of
+                PNotFired -> return ()
+                PFired ioaction -> ioaction
 
-          modifyIORef clockRef (\(T i) -> T $ i + 1)
+              writeIORef streamRef nextPushes
 
-    ((), (Plans planEvs, Pushes pushesEv)) <- runReaderT (runWriterT . unPlanHold $ ph) env
+              modifyIORef clockRef (\(T i) -> T $ i + 1)
+
+    ((), (Plans planEvs, pushes)) <- runReaderT (runWriterT . unPlanHold $ ph) env
+    writeIORef streamRef pushes
 
   return ()

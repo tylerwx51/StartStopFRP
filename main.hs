@@ -163,11 +163,11 @@ drawPlot points = color (Gloss.black) . (Gloss.line) $ shiftedPoints
     max_x = maximum $ fmap fst points
     min_x = minimum $ fmap fst points
     shiftedPoints = fmap (\(x,y) -> (x - max_x, y)) points
-{-
--}
+
+
 {-
 main = testPlanHold 100000 $ \tick -> liftHold $ do
-
+  bTick <- holdEs tick 0
   bTime <- foldEs' (+) tick 0
   return $ fmap show bTime
 -}
