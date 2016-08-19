@@ -23,7 +23,7 @@ callbackStream = do
         sr
 
       evs = EvStream $ do
-              t <- ask
+              t <- getCurTime
               mtvs <- liftIO $ readIORef currentValRef
               vs <- case mtvs of
                 Just (t', vs)
