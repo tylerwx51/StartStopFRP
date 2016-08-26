@@ -1,4 +1,6 @@
 {-# LANGUAGE RecursiveDo #-}
+module Main where
+
 import Control.StartStop.Gloss
 import Control.StartStop.Core
 import Control.StartStop.Lib
@@ -167,7 +169,6 @@ drawPlot points = color (Gloss.black) . (Gloss.line) $ shiftedPoints
 
 {-
 main = testPlanHold 100000 $ \tick -> liftHold $ do
-  bTick <- holdEs tick 0
-  bTime <- foldEs' (+) tick 0
+  bTime <- holdEs tick 0
   return $ fmap show bTime
 -}

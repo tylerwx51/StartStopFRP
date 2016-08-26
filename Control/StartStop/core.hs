@@ -43,7 +43,7 @@ the value (pInfo, self), we know the following:
 However, it can remove streams that are known to no longer fire, therefore removing
 them from taking space and having to be run.
 -}
-data PushInfo a = PNotFired | PFired a
+data PushInfo a = PNotFired | PFired !a
 data PushStream t = PNever | Pls (Sample t (PushInfo (IO ()), PushStream t))
 
 evStreamToPushStream :: EvStream t (Maybe (IO ())) -> PushStream t
