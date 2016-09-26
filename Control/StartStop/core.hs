@@ -25,15 +25,7 @@ import System.Mem.Weak
 --}
 newtype Time = T Integer deriving (Eq, Ord, Show)
 
-{--
--- Pushes is used to tell the main loop when it needs to
--- run IO actions that will ensure behaviors created by holdEs is up to date.
---}
-newtype Pushes t = Pushes (EvStream t (IO ()))
 
-instance Monoid (Pushes t) where
-  mempty = Pushes never
-  mappend (Pushes el) (Pushes er) = Pushes $ mergefEs (>>) el er
 
 {-
 PushStream is similar to EvStream.
@@ -279,7 +271,7 @@ usePrevB currentValRef futureRef bToMemo = Behavior $ do
           -}
           curTime <- getCurrentTime
           (BehaviorInfo v sFuture sct, p) <- HoldIn $ listen . unHoldIn $ runB bToMemo
-          let mf = memoFuture sFuture
+          let mf = sFuture
           liftIO $ writeIORef currentValRef (Just (curTime, BehaviorInfo v mf sct, p))
           return $ BehaviorInfo v mf sct
 
@@ -312,7 +304,6 @@ usePrevB currentValRef futureRef bToMemo = Behavior $ do
         checkFutureRefValid = do
           curTime <- getCurrentTime
           mtfuture <- liftIO $ readIORef futureRef
-
           case mtfuture of
             Just (tf', bInfo', p') -> do
                 mct' <- liftSample $ lastChangeTime bInfo'
@@ -320,7 +311,6 @@ usePrevB currentValRef futureRef bToMemo = Behavior $ do
                   Just ct'
                     | tf' == ct' -> do -- Since futureRef can only be grabbed on the round it changes,
                       liftIO $ writeIORef currentValRef $ Just (curTime, bInfo', p')
-                      liftIO $ writeIORef futureRef Nothing
                       addPushStream p'
                       return bInfo'
                   _ -> reRun
@@ -331,6 +321,7 @@ usePrevB currentValRef futureRef bToMemo = Behavior $ do
     - uses that as the value of the behavior. If it is not it checkFutureRefValid
     -}
     mtv <- liftIO $ readIORef currentValRef
+    curTime <- getCurrentTime
 
     case mtv of
       Nothing -> reRun
@@ -366,7 +357,7 @@ instance Monad (Behavior t) where
               futureB' <- sFutureB'
               case futureB' of
                 NotFired -> return $ FiredNow (BehaviorInfo b' (sFutureF sFutureA' sFutureB') (mostRecent sta' stb')) (pa' <> pb')
-                FiredNow (BehaviorInfo fb' sFutureFB' stfb') pfb' -> return $ FiredNow (BehaviorInfo fb' sFutureFB' (mostRecent sta' (mostRecent stb' stfb'))) (pa' <> pb' <> pfb')
+                FiredNow (BehaviorInfo fb' sFutureFB' stfb') pfb' -> return $ FiredNow (BehaviorInfo fb' (sFutureF sFutureA' sFutureFB') (mostRecent sta' stfb')) (pa' <> pb' <> pfb')
 
     return $ BehaviorInfo b (sFutureF sFutureA sFutureB) (mostRecent sta stb)
 
@@ -598,3 +589,74 @@ unsafePlan evs = Hold $ do
   plans <- liftIO $ unsafeIOSequence evs
   addPushStream $ evStreamToPushStream $ Just (return ()) <$ plans
   return plans
+
+holdEs2 :: forall t a . EvStream t a -> a -> Hold t (Behavior t a)
+holdEs2 evs iv = Hold $ do
+  startTime <- getCurrentTime
+
+  let toPush = catMaybeEs $ startOnFire $ flip fmap (listenPushes evs) $ \(a, p) -> Hold $ do
+                            t <- getCurrentTime
+                            if startTime == t
+                            then return Nothing
+                            else return $ Just (t, a, p)
+
+
+  toPushRef <- liftIO $ newIORef toPush
+  toPushWeakRef <- liftIO $ mkWeakIORef toPushRef (return ())
+
+  let strongPush = EvStream $ do
+              evs <- liftIO $ readIORef toPushRef
+              case evs of
+                Never -> return NotFired
+                EvStream es -> es
+
+      weakPush = EvStream $ do
+                  evsRef <- liftIO $ deRefWeak toPushWeakRef
+                  case evsRef of
+                    Just evsR -> do
+                      evs <- liftIO $ readIORef evsR
+                      case evs of
+                        Never -> return NotFired
+                        EvStream me -> me
+                    Nothing -> return NotFired
+
+  ref <- liftIO $ newIORef (iv, mempty, Nothing)
+  weakRef <- liftIO $ mkWeakIORef ref (return ())
+
+  let primaryPushes Never = PNever
+      primaryPushes evs@(EvStream sEInfo) = Pls $ do
+        mr <- liftIO $ deRefWeak weakRef
+        case mr of
+          Just r -> do
+            eInfo <- sEInfo
+            case eInfo of
+              NotFired -> return (PNotFired, primaryPushes evs)
+              FiredNow (t, newVal, newEffects) _ -> do
+                let pushAction = do
+                      (_, oldEffects, _) <- readIORef r
+                      writeIORef r (newVal, oldEffects <> newEffects, Just t)
+                return (PFired pushAction, primaryPushes evs)
+          Nothing -> return (PNotFired, PNever)
+
+      subPushes :: PushStream t
+      subPushes = Pls $ do
+        mr <- liftIO $ deRefWeak weakRef
+        case mr of
+          Just r -> do
+            (_, subEffects, _) <- liftIO $ readIORef r
+            case subEffects of
+              PNever -> return (PNotFired, PNever)
+              Pls mSubEffects -> mSubEffects
+          Nothing -> return (PNotFired, PNever)
+
+  addPushStream $ primaryPushes weakPush
+  addPushStream subPushes
+
+  return $ Behavior $ do
+    (v, effects, _) <- liftIO $ readIORef ref
+    addPushStream effects
+    let lastChange = liftIO $ (\(_,_,sct) -> sct) <$> readIORef ref
+        sFuture = case strongPush of
+                    Never -> return NotFired
+                    EvStream mToPush -> fmap (fmap (\(_,v,_) -> BehaviorInfo v sFuture lastChange)) mToPush
+    return $ BehaviorInfo v sFuture lastChange
