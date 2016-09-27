@@ -87,5 +87,11 @@ executable tryItOut
   main-is:             tryItOutMain.hs
   build-depends:       base >=4.8 && <4.9, mtl, transformers, gloss > 1.10, gloss-algorithms
                        , Chart, Chart-cairo
+  ghc-options:
+                  -O2
+                  -threaded
+                  -fprof-auto
+                  -auto-all
+                  -caf-all
   extra-lib-dirs:       /usr/lib
   default-language:    Haskell2010

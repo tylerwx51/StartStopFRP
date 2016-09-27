@@ -4,7 +4,7 @@ module Main where
 import Control.StartStop.Gloss
 import Control.StartStop.Core
 import Control.StartStop.Lib
-import Control.StartStop.RunHold
+import Control.StartStop.Run
 import Control.Monad
 
 import Graphics.Gloss
@@ -23,8 +23,8 @@ reallySeqList (x:xs) = reallySeqList xs
 rseq :: [a] -> [a]
 rseq xs = reallySeqList xs xs
 
-holdLastNSecs :: Float -> EvStream t Float -> Behavior t a -> Hold t (Behavior t [(Float, a)])
-holdLastNSecs holdTime clock b = foldEs' (\vs (t, v) -> rseq $ (t, v) : filter ((> t - holdTime) . fst) vs) (flip (,) <$> b <@> clock) []
+holdLastNSecs :: Float -> EvStream t Float -> Reactive t a -> Behavior t (Reactive t [(Float, a)])
+holdLastNSecs holdTime clock b = foldEs (\vs (t, v) -> rseq $ (t, v) : filter ((> t - holdTime) . fst) vs) [] (flip (,) <$> b <@> clock)
 
 decayColorLine :: [(Float, (Float, Float))] -> Picture
 decayColorLine vs = foldl' (flip (<>)) mempty $ fmap (\(t, (x, y)) -> color (timeColor t) $ translate x y $ circleSolid 10) $ vs
@@ -70,15 +70,15 @@ main2 = runGlossHoldIO (InWindow "X-Y Pos" (500, 500) (10, 10)) white 60 $ \tick
   return $ fmap decayColorLine bTrail
 -}
 
-data Screen t = Screen { bPic :: Behavior t Picture, bChange :: EvStream t (Screen t) }
-main :: IO ()
-main = runGlossHoldIO (InWindow "Examples" (500, 500) (10, 10)) white 60 $ \tick ev -> liftHold $ do
-          bTime <- foldEs (+) tick 0
+data Screen t = Screen { bPic :: Reactive t Picture, bChange :: EvStream t (Screen t) }
+main2 :: IO ()
+main2 = runGlossHoldIO (InWindow "Examples" (500, 500) (10, 10)) white 60 $ \tick ev -> liftBehavior $ do
+          bTime <- foldEs (+) 0 tick
           let clock = changes bTime
           (Screen bm buttonPress) <- mainMenu clock ev
           rec
             let stream = switch active
-            active <- holdEs (fmap bChange stream) buttonPress
+            active <- holdEs buttonPress (fmap bChange stream)
 
           switcher bm $ fmap bPic stream
 
@@ -99,7 +99,7 @@ isMouseChange :: Event -> Maybe (Float, Float)
 isMouseChange (EventMotion (dx, dy)) = Just (dx, dy)
 isMouseChange _ = Nothing
 
-mainMenu :: EvStream t Float -> EvStream t [Event] -> Hold t (Screen t)
+mainMenu :: EvStream t Float -> EvStream t [Event] -> Behavior t (Screen t)
 mainMenu clock ev = do
   let clickButton = renderButton extentClick "Click Example"
       clickButtonEvent = void $ ffilter (any (isClickedBy extentClick)) ev
@@ -115,7 +115,7 @@ mainMenu clock ev = do
 
   return $ Screen (return $ clickButton <> mouseTrackButton <> mouseTrailButton) (foldr1 leftmost [enterClick, enterMouse, enterTrail])
 
-clickExample :: EvStream t [Event] -> Hold t (Behavior t Picture)
+clickExample :: EvStream t [Event] -> Behavior t (Reactive t Picture)
 clickExample ev = do
   -- filter ev down to only the first mouse click event.
   let mouseClickEvs = filterMap (\xs -> case filterMap isMouseClickEvent xs of
@@ -123,7 +123,7 @@ clickExample ev = do
                                           (x:_) -> Just x) ev
 
   -- creates a behavior with a value of the last clicks position
-  bLastMouseClick <- holdEs mouseClickEvs (0,0)
+  bLastMouseClick <- holdEs (0,0) mouseClickEvs
 
   -- Takes a position and makes a Picture of text with the value of the position
   let positionToText = translate (negate 240) (negate 240) . scale 0.4 0.4 . text . show
@@ -131,33 +131,30 @@ clickExample ev = do
   -- return a behavior whos current value is the current screen to draw.
   return $ fmap positionToText bLastMouseClick
 
-mouseTrackerExample :: EvStream t Float -> EvStream t [Event] -> Hold t (Behavior t Picture)
+mouseTrackerExample :: EvStream t Float -> EvStream t [Event] -> Behavior t (Reactive t Picture)
 mouseTrackerExample clock ev = do
-  bMousePos <- holdEs (filterMap (\xs -> case filterMap isMouseChange xs of
+  bMousePos <- holdEs (0, 0) (filterMap (\xs -> case filterMap isMouseChange xs of
                                       [] -> Nothing
-                                      (x:_) -> Just x) ev) (0,0)
+                                      (x:_) -> Just x) ev)
   bMousePosData <- holdLastNSecs 5 clock (fmap snd bMousePos)
   return $ fmap (translate 0 0 . scale 50 1 . drawPlot) bMousePosData
 
-mouseTrailExample :: EvStream t Float -> EvStream t [Event] -> Hold t (Behavior t Picture)
+mouseTrailExample :: EvStream t Float -> EvStream t [Event] -> Behavior t (Reactive t Picture)
 mouseTrailExample clock ev = do
-  bMousePos <- holdEs (filterMap (\xs -> case filterMap isMouseChange xs of
+  bMousePos <- holdEs (0,0) (filterMap (\xs -> case filterMap isMouseChange xs of
                                       [] -> Nothing
-                                      (x:_) -> Just x) ev) (0,0)
+                                      (x:_) -> Just x) ev)
   bTrail <- holdLastNSecs 1.2 clock bMousePos
 
   return $ fmap decayColorLine bTrail
 
-exampleToScreen :: EvStream t Float -> EvStream t [Event] -> Behavior t Picture -> Hold t (Screen t)
+exampleToScreen :: EvStream t Float -> EvStream t [Event] -> Reactive t Picture -> Behavior t (Screen t)
 exampleToScreen clock ev bPic = do
   let extentBack = makeExtent (negate 250 + 35) (negate 250 + 5) (250 - 10) (250 - 90)
       backButton = renderButton extentBack "Back"
       backEvent = startOnFire (mainMenu clock ev <$ ffilter (any (isClickedBy extentBack)) ev)
 
   return $ Screen (fmap (<> backButton) bPic) backEvent
-
-tryItOut :: (EvStream t Float -> EvStream t Event -> Hold t (Behavior t Picture)) -> IO ()
-tryItOut fh = runGlossHoldIO (InWindow "Try It Out" (500, 500) (10, 10)) white 60 $ \clock evs -> liftHold $ fh clock (fmap head evs)
 
 drawPlot :: [(Float, Float)] -> Picture
 drawPlot points = color (Gloss.black) . (Gloss.line) $ shiftedPoints
@@ -167,8 +164,6 @@ drawPlot points = color (Gloss.black) . (Gloss.line) $ shiftedPoints
     shiftedPoints = fmap (\(x,y) -> (x - max_x, y)) points
 
 
-{-
-main = testPlanHold 100000 $ \tick -> liftHold $ do
-  bTime <- holdEs tick 0
+main = runBehavior 1000000 $ \tick -> do
+  bTime <- switcher (return 0) $ startOnFire $ fmap (\_ -> holdEs 0 tick) $ ffilter (\x -> x `rem` 3 == 0) tick
   return $ fmap show bTime
--}

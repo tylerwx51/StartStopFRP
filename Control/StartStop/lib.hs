@@ -8,21 +8,21 @@ import Control.Monad
 {- Starts the given hold, if its returned value is not Nothing. This is
    equivalent to "catMabyeEs . startOnFire".
 -}
-pull :: EvStream t (Hold t (Maybe a)) -> EvStream t a
+pull :: EvStream t (Behavior t (Maybe a)) -> EvStream t a
 pull = catMaybes . startOnFire
 
 {-
 - slight performance improvement over mergefEs in a few cases. Basicly used for
 - an efficient leftmost.
--}
+
 mergefpEs :: (PushOnly t a -> PushOnly t a -> PushOnly t a) -> EvStream t a -> EvStream t a -> EvStream t a
 mergefpEs f el er = pushes $ mergefEs f (unPushes el) (unPushes er)
-
+-}
 {- merges two EvStreams, if they both fire at the same time, then the left
 - value is kept and the right is thrown away.
 -}
 leftmost :: EvStream t a -> EvStream t a -> EvStream t a
-leftmost = mergefpEs const
+leftmost = mergefEs const
 
 {- If two events fire at the same exact time apply ef to ea-}
 data EitherBoth a b = EBLeft a | EBRight b | EBBoth a b
@@ -36,52 +36,45 @@ infixl 4 <#>
 (<#>) = applyEs
 
 {- "gate b e" fires whenever e fires and when the value of b is True. -}
-gate :: Behavior t Bool -> EvStream t a -> EvStream t a
+gate :: Reactive t Bool -> EvStream t a -> EvStream t a
 gate b es = pull $ flip fmap es $ \v -> do
-  p <- sample b
+  p <- liftReactive b
   return $ if p then Just v else Nothing
 
 {- "snapshots b e" fires whenever e fires with the value of b when e fires.-}
-snapshots :: Behavior t a -> EvStream t x -> EvStream t a
-snapshots b es = pull $ (Just <$> sample b) <$ es
+snapshots :: Reactive t a -> EvStream t x -> EvStream t a
+snapshots b es = pull $ (Just <$> liftReactive b) <$ es
 
 infixl 4 <@>
-(<@>) :: Behavior t (a -> b) -> EvStream t a -> EvStream t b
+(<@>) :: Reactive t (a -> b) -> EvStream t a -> EvStream t b
 b <@> es = pull $ flip fmap es $ \a -> do
-  f <- sample b
+  f <- liftReactive b
   return $ Just $ f a
 
-foldEs :: (a -> b -> a) -> EvStream t b -> a -> Hold t (Behavior t a)
-foldEs f es iv = do
+foldEs :: (a -> b -> a) -> a -> EvStream t b -> Behavior t (Reactive t a)
+foldEs f iv es = do
   rec
     let ups = f <$> b <@> es
-    b <- holdEs ups iv
+    b <- holdEs iv ups
   return b
 
-foldEs' :: (a -> b -> a) -> EvStream t b -> a -> Hold t (Behavior t a)
-foldEs' f es iv = do
-  rec
-    let ups = f <$> b <@> es
-    b <- holdEs ups iv
-  return b
-
-switchEs :: EvStream t a -> EvStream t (EvStream t a) -> Hold t (EvStream t a)
+switchEs :: EvStream t a -> EvStream t (EvStream t a) -> Behavior t (EvStream t a)
 switchEs iv sw = do
-  bes <- holdEs sw iv
+  bes <- holdEs iv sw
   return $ switch bes
 
-switcher :: Behavior t a -> EvStream t (Behavior t a) -> Hold t (Behavior t a)
+switcher :: Reactive t a -> EvStream t (Reactive t a) -> Behavior t (Reactive t a)
 switcher iv es = do
-  bb <- holdEs es iv
+  bb <- holdEs iv es
   return $ join bb
 
-toggle :: EvStream t x -> Bool -> Hold t (Behavior t Bool)
-toggle = foldEs' (\v _ -> not v)
+toggle :: Bool -> EvStream t x -> Behavior t (Reactive t Bool)
+toggle = foldEs (\v _ -> not v)
 
-count :: (Integral a) => EvStream t x -> Hold t (Behavior t a)
-count e = foldEs' (\v _ -> v + 1) e 0
+count :: (Integral a) => EvStream t x -> Behavior t (Reactive t a)
+count = foldEs (\v _ -> v + 1) 0
 
-debugIO :: EvStream t (IO ()) -> Hold t ()
+debugIO :: EvStream t (IO ()) -> Behavior t ()
 debugIO = void . unsafePlan
 
 force :: EvStream t a -> EvStream t a

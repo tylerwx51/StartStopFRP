@@ -1,9 +1,8 @@
 module Control.StartStop.Gloss where
 
 import Control.StartStop.Core
-import Control.StartStop.Lib
 import Control.StartStop.EvPrim
-import Control.StartStop.RunHold
+import Control.StartStop.Run
 
 import Control.Monad.IO.Class
 
@@ -11,7 +10,7 @@ import Data.IORef
 
 import Graphics.Gloss.Interface.IO.Game
 
-runGlossHoldIO :: Display -> Color -> Int -> (EvStream t Float -> EvStream t [Event] -> PlanHold t (Behavior t Picture)) -> IO ()
+runGlossHoldIO :: Display -> Color -> Int -> (EvStream t Float -> EvStream t [Event] -> PlanHold t (Reactive t Picture)) -> IO ()
 runGlossHoldIO displayMode bgColor fps bPicture = do
   actionsRef <- newIORef []
   pictureRef <- newIORef undefined
@@ -30,10 +29,10 @@ runGlossHoldIO displayMode bgColor fps bPicture = do
         --liftIO $ writeIORef renderTriggerRef renderTrigger
 
         bPic <- bPicture (fmap head clock) events
-        let renderPic = startOnFire $ sampleAfter bPic <$ clock
+        let renderPic = startOnFire $ liftReactiveAfter bPic <$ clock
         planEs $ flip fmap renderPic $ \pic -> liftIO $ writeIORef pictureRef pic
 
-        inital <- liftHold $ sampleAfter bPic
+        inital <- liftBehavior $ liftReactiveAfter bPic
         liftIO $ writeIORef pictureRef inital
         return ()
 

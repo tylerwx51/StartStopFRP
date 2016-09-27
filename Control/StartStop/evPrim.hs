@@ -39,7 +39,7 @@ callbackStream = do
 
               case vs of
                 [] -> return NotFired
-                _ -> return $ return vs
+                _ -> return $ FiredNow vs PNever
 
   _ <- planEs $ return () <$ evs
   return (trigger, evs)
