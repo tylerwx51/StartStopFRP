@@ -12,15 +12,15 @@ isMouseClickEvent :: Event -> Maybe (Float, Float)
 isMouseClickEvent (EventKey (MouseButton LeftButton) Down _ pos) = Just pos
 isMouseClickEvent _ = Nothing
 
-main = runGlossHoldIO (InWindow "Tic-Tac-Toe" (500, 500) (10, 10)) white 60 $ \tick ev -> liftHold $ do
-          bTime <- foldEs (+) tick 0
+main = runGlossHoldIO (InWindow "Tic-Tac-Toe" (500, 500) (10, 10)) white 60 $ \tick ev -> liftBehavior $ do
+          bTime <- foldEs (+) 0 tick
           let clock = changes bTime
 
               mouseClickEvs = filterMap (\xs -> case filterMap isMouseClickEvent xs of
                                                   [] -> Nothing
                                                   (x:_) -> Just x) ev
 
-          bGameState <- foldEs (\gs f -> f gs) ((\(x, y) -> playerPlays (floor (x / 50)) (floor (y / 50))) <$> mouseClickEvs) initGameState
+          bGameState <- foldEs (\gs f -> f gs) initGameState ((\(x, y) -> playerPlays (floor (x / 50)) (floor (y / 50))) <$> mouseClickEvs)
           return $ fmap drawGameState bGameState
 
 data Player = X | O deriving(Eq,Show)

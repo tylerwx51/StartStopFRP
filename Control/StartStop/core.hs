@@ -24,7 +24,7 @@ the value (pInfo, self), we know the following:
 However, it can remove streams that are known to no longer fire, therefore removing
 them from taking space and having to be run.
 -}
-data PushInfo a = PNotFired | PFired !a
+data PushInfo a = PNotFired | PFired !a deriving(Functor)
 data PushStream t = PNever | Pls (Sample t (PushInfo (IO ()), PushStream t))
 
 evStreamToPushStream :: EvStream t (Maybe (IO ())) -> PushStream t
@@ -214,6 +214,18 @@ instance MonadFix (Reactive t) where
 never :: EvStream t a
 never = Never
 
+coincidence :: EvStream t (EvStream t a) -> EvStream t a
+coincidence Never = Never
+coincidence eevs = EvStream $ do
+  evsInfo <- sampleEvStream eevs
+  case evsInfo of
+    NotFired -> return NotFired
+    FiredNow evs pOut -> do
+      eInfo <- sampleEvStream evs
+      case eInfo of
+        NotFired -> return NotFired
+        FiredNow v pIn -> return $ FiredNow v (pOut <> pIn)
+
 catMaybeEs :: EvStream t (Maybe a) -> EvStream t a
 catMaybeEs Never = Never
 catMaybeEs (EvStream sampleEvs) = EvStream $ do
@@ -269,59 +281,6 @@ listenPushes (EvStream sEInfo) = EvStream $ do
   case eInfo of
     NotFired -> return NotFired
     FiredNow a p -> return $ FiredNow (a, p) p
-
-
-holdEs :: a -> EvStream t a -> Behavior t (Reactive t a)
-holdEs iv evs = Behavior $ do
-  startTime <- lift getCurTime
-  ref <- liftIO $ newIORef (iv, mempty, Nothing)
-
-  {- The weak refrence is used to write to, if nobody can read from ref
-  -- (aka. nobody samples the end behavior), then their is no reason to
-  -- write to it. Since it is a weak refence it will not write anything
-  -- to the refrence if it no longer is in use.
-  -}
-  weakRef <- liftIO $ mkWeakIORef ref (return ())
-
-  let subPushes prevT prevPush = Pls $ do
-        mr <- liftIO $ deRefWeak weakRef
-        case mr of
-          Nothing -> return (PNotFired, PNever)
-          Just r -> do
-            (_, pStream, mt) <- liftIO (readIORef r)
-            let currentPush = if mt == prevT then prevPush else pStream
-            case currentPush of
-              PNever -> return (PNotFired, subPushes prevT PNever)
-              (Pls sEff) -> do
-                (eff, next) <- sEff
-                return (eff, subPushes prevT next)
-
-      primaryPushes Never = PNever
-      primaryPushes evs@(EvStream sEInfo) = Pls $ do
-        mr <- liftIO $ deRefWeak weakRef
-        case mr of
-          Just r -> do
-            eInfo <- sEInfo
-            case eInfo of
-              NotFired -> return (PNotFired, primaryPushes evs)
-              FiredNow (t, newVal, subEffects) _ -> do
-                let pushAction = writeIORef r (newVal, subEffects, Just t)
-                return (PFired pushAction, primaryPushes evs)
-          Nothing -> return (PNotFired, PNever)
-
-      toPush = catMaybeEs $ startOnFire $ flip fmap (listenPushes evs) $ \(a, p) -> Behavior $ do
-                                t <- lift getCurTime
-                                if startTime == t
-                                then return Nothing
-                                else return $ Just (t, a, p)
-
-  tell $ primaryPushes toPush
-  tell $ subPushes Nothing PNever
-
-  return $ Reactive $ do
-    (v, effects, _) <- liftIO $ readIORef ref
-    let lastChange = liftIO $ (\(_,_,sct) -> sct) <$> readIORef ref
-    return $ ReactiveInfo v evs lastChange effects
 
 liftReactive :: Reactive t a -> Behavior t a
 liftReactive r = Behavior $ do
@@ -406,18 +365,16 @@ liftBehavior b = PlanHold $ do
   tell (mempty, p)
   return a
 
-{-
 
-holdEs2 :: forall t a . EvStream t a -> a -> Hold t (Behavior t a)
-holdEs2 evs iv = Hold $ do
-  startTime <- getCurrentTime
+holdEs :: forall t a . a -> EvStream t a -> Behavior t (Reactive t a)
+holdEs iv evs = Behavior $ do
+  startTime <- lift getCurTime
 
-  let toPush = catMaybeEs $ startOnFire $ flip fmap (listenPushes evs) $ \(a, p) -> Hold $ do
-                            t <- getCurrentTime
+  let toPush = catMaybeEs $ startOnFire $ flip fmap (listenPushes evs) $ \(a, p) -> Behavior $ do
+                            t <- lift getCurTime
                             if startTime == t
                             then return Nothing
                             else return $ Just (t, a, p)
-
 
   toPushRef <- liftIO $ newIORef toPush
   toPushWeakRef <- liftIO $ mkWeakIORef toPushRef (return ())
@@ -450,9 +407,7 @@ holdEs2 evs iv = Hold $ do
             case eInfo of
               NotFired -> return (PNotFired, primaryPushes evs)
               FiredNow (t, newVal, newEffects) _ -> do
-                let pushAction = do
-                      (_, oldEffects, _) <- readIORef r
-                      writeIORef r (newVal, oldEffects <> newEffects, Just t)
+                let pushAction = writeIORef r (newVal, newEffects, Just t)
                 return (PFired pushAction, primaryPushes evs)
           Nothing -> return (PNotFired, PNever)
 
@@ -461,21 +416,19 @@ holdEs2 evs iv = Hold $ do
         mr <- liftIO $ deRefWeak weakRef
         case mr of
           Just r -> do
-            (_, subEffects, _) <- liftIO $ readIORef r
+            (v, subEffects, t) <- liftIO $ readIORef r
             case subEffects of
-              PNever -> return (PNotFired, PNever)
-              Pls mSubEffects -> mSubEffects
+              PNever -> return (PNotFired, subPushes)
+              Pls mSubEffects -> do
+                (pInfo, pNew) <- mSubEffects
+                liftIO $ writeIORef r (v,pNew,t)
+                return (pInfo, subPushes)
           Nothing -> return (PNotFired, PNever)
 
-  addPushStream $ primaryPushes weakPush
-  addPushStream subPushes
+  tell $ primaryPushes weakPush
+  tell subPushes
 
-  return $ Behavior $ do
+  return $ Reactive $ do
     (v, effects, _) <- liftIO $ readIORef ref
-    addPushStream effects
     let lastChange = liftIO $ (\(_,_,sct) -> sct) <$> readIORef ref
-        sFuture = case strongPush of
-                    Never -> return NotFired
-                    EvStream mToPush -> fmap (fmap (\(_,v,_) -> BehaviorInfo v sFuture lastChange)) mToPush
-    return $ BehaviorInfo v sFuture lastChange
--}
+    return $ ReactiveInfo v ((\(_,v,_) -> v) <$> strongPush) lastChange effects

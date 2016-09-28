@@ -163,7 +163,6 @@ drawPlot points = color (Gloss.black) . (Gloss.line) $ shiftedPoints
     min_x = minimum $ fmap fst points
     shiftedPoints = fmap (\(x,y) -> (x - max_x, y)) points
 
-
 main = runBehavior 1000000 $ \tick -> do
   bTime <- switcher (return 0) $ startOnFire $ fmap (\_ -> holdEs 0 tick) $ ffilter (\x -> x `rem` 3 == 0) tick
   return $ fmap show bTime
