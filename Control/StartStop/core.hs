@@ -398,17 +398,17 @@ holdEs iv evs = Behavior $ do
   ref <- liftIO $ newIORef (iv, mempty, Nothing)
   weakRef <- liftIO $ mkWeakIORef ref (return ())
 
-  let primaryPushes Never = PNever
-      primaryPushes evs@(EvStream sEInfo) = Pls $ do
+  let primaryPushes :: PushStream t
+      primaryPushes = Pls $ do
         mr <- liftIO $ deRefWeak weakRef
         case mr of
           Just r -> do
-            eInfo <- sEInfo
+            eInfo <- sampleEvStream weakPush
             case eInfo of
-              NotFired -> return (PNotFired, primaryPushes evs)
+              NotFired -> return (PNotFired, primaryPushes)
               FiredNow (t, newVal, newEffects) _ -> do
                 let pushAction = writeIORef r (newVal, newEffects, Just t)
-                return (PFired pushAction, primaryPushes evs)
+                return (PFired pushAction, primaryPushes)
           Nothing -> return (PNotFired, PNever)
 
       subPushes :: PushStream t
@@ -425,7 +425,7 @@ holdEs iv evs = Behavior $ do
                 return (pInfo, subPushes)
           Nothing -> return (PNotFired, PNever)
 
-  tell $ primaryPushes weakPush
+  tell primaryPushes
   tell subPushes
 
   return $ Reactive $ do
