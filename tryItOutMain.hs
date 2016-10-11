@@ -1,8 +1,15 @@
-{-# LANGUAGE RecursiveDo #-}
+{-# LANGUAGE RecursiveDo, TypeFamilies, FlexibleContexts, UndecidableInstances #-}
+
 
 import TryItOut
 import Data.Monoid
 import Control.Applicative
+import VectorV
+import Control.Monad
+import Data.Char
+import Data.Foldable
+
+import Data.List (find)
 
 data DrawPlot x y = PlotLine [VectorP Plot] Color
                   | PlotPoint (VectorP Plot) Color Float
@@ -47,7 +54,6 @@ drawAxis convInfo drawPlots = plotToPic drawPlots
     plotToPic (PlotGrid c) = color c $ foldMap (plotToPic . flip PlotVertLine c . fromIntegral) [floor lx .. ceiling ux] <> foldMap (plotToPic . flip PlotHorizLine c . fromIntegral) [floor ly .. ceiling uy]
     plotToPic (Plots ps) = foldMap plotToPic ps
     plotToPic (Vector v c) = color c $ vectorPic convInfo (plot2screen convInfo v)
-
 
 vectorPic :: Conversion -> VectorP Screen -> Picture
 vectorPic con (PlotVector x y) = line [(ox, oy) , rotateScale aHead] <> line [rotateScale aHead, rotateScale aBack1] <> line [rotateScale aHead, rotateScale aBack2]
@@ -107,13 +113,18 @@ trans con = Bijection fun inv
     fun (PlotVector x y) = screenVector (pointToScreenScaleX * (x - ((ux + lx) / 2)), pointToScreenScaleY * (y - ((uy + ly) / 2)))
     inv (PlotVector sx sy) = plotVector (sx / pointToScreenScaleX + (ux + lx) / 2, sy / pointToScreenScaleY + (uy + ly) / 2)
 
+(<<>*>) :: (Applicative f, Monoid m) => f m -> f m -> f m
 (<<>*>) = liftA2 (<>)
 
-add :: VectorP p -> VectorP p -> VectorP p
-add (PlotVector x1 y1) (PlotVector x2 y2) = uncurry PlotVector (x1 + x2, y1 + y2)
+instance VectorSpace (VectorP p) where
+  type Scalar (VectorP p) = Float
+  (PlotVector x1 y1) ^+^ (PlotVector x2 y2) = uncurry PlotVector (x1 + x2, y1 + y2)
+  s *^ (PlotVector x y) = uncurry PlotVector (s * x, s * y)
+  zeroV = PlotVector 0 0
+  negateV v = negate 1 *^ v
 
-scaleV :: Float -> VectorP p -> VectorP p
-scaleV s (PlotVector x y) = uncurry PlotVector (s * x, s * y)
+instance BasisSpace (VectorP p) where
+  basisVectors = [PlotVector 1 0, PlotVector 0 1]
 
 main = tryItOut $ \clock events -> do
   let convInfo = Conversion (-5, -3) (15, 15) (800, 800)
@@ -122,14 +133,28 @@ main = tryItOut $ \clock events -> do
   let bPlotMouse = fmap (screen2plot convInfo) bMouseVector
       bPlotVector = fmap (\vp -> Vector vp green) bPlotMouse
 
-  (bIVector, bJVector) <- bMouseDrag bPlotMouse events convInfo
-  let bBasisGrid = gridForBasis <$> bIVector <*> bJVector
-      bAVector = liftA2 (\i j -> scaleV 3 i `add` scaleV 2 j) bIVector bJVector
+  (bIVector, bJVector) <- bMouseDrag events convInfo
+  rLmap <- keypressMap events convInfo
+  let bBasisGrid = drawLinearMap <$> rLmap --gridForBasis <$> bIVector <*> bJVector
+      bAVector = liftA2 (\i j -> 3 *^ i ^+^ 2 *^ j) bIVector bJVector
+      lmap2text (LinearMap2D a00 a01 a10 a11) = translate (-240) (220) (text (show a00)) <> translate (-240) (220 - 100) (text (show a10)) <> translate (-240 + 200) (220) (text (show a01)) <> translate (-240 + 200) (220 - 100) (text (show a11))
+      rText = lmap2text <$> rLmap
+      rPlotPic = fmap (drawAxis convInfo) $ pure (PlotGrid (makeColor 0.2 0.2 0.2 0.2)) <<>*> pure plotAxis <<>*> bBasisGrid -- <<>*> fmap (`Vector` green) bIVector <<>*> fmap (`Vector` red) bJVector <<>*> fmap (`Vector` orange) bAVector
+      rEigenVs = fmap eigenvalues $ rLmap
+      ev2evector lm v = case eigenvectors lm v of
+                      Single a -> a
+                      AllV -> PlotVector 1 0
 
-  return $ fmap (drawAxis convInfo) $ pure (PlotGrid (makeColor 0.2 0.2 0.2 0.2)) <<>*> pure plotAxis <<>*> bBasisGrid <<>*> fmap (`Vector` green) bIVector <<>*> fmap (`Vector` red) bJVector <<>*> fmap (`Vector` orange) bAVector
+      rEvector = (\vs lm -> fmap (ev2evector lm) vs) <$> rEigenVs <*> rLmap
+      rDraw = fmap (drawAxis convInfo) $ fmap (\vs -> fold $ fmap (`Vector` green) vs) rEvector
+
+  return $ rText <<>*> rDraw <<>*> rPlotPic
 
 dist :: VectorP p -> VectorP p -> Float
 dist (PlotVector x1 y1) (PlotVector x2 y2) = sqrt ((x2 - x1) ^ 2 + (y2 - y1) ^ 2)
+
+drawLinearMap :: LinearMap2D (VectorP Plot) -> DrawPlot Float Float
+drawLinearMap (LinearMap2D a00 a01 a10 a11) = gridForBasis (plotVector (a00, a10)) (plotVector (a01, a11))
 
 gridForBasis :: VectorP Plot -> VectorP Plot -> DrawPlot Float Float
 gridForBasis (PlotVector x y) (PlotVector a b) = foldMap igridn [-100 .. 100] <> foldMap jgridn [-100 .. 100]
@@ -153,9 +178,62 @@ gridForBasis (PlotVector x y) (PlotVector a b) = foldMap igridn [-100 .. 100] <>
         x3 = x1 - x * 100
         y3 = y1 - y * 100
 
+data LinearMap2D v = LinearMap2D (Scalar v) (Scalar v) (Scalar v) (Scalar v)
+
+instance (VectorSpace v, Show (Scalar v)) => Show (LinearMap2D v) where
+  show (LinearMap2D a00 a01 a10 a11) = "[[ " ++ show a00 ++ ", " ++ show a01 ++ "],\n [ " ++ show a10 ++ ", " ++ show a11 ++"]]"
+
+eigenvalues :: (Floating (Scalar v), Ord (Scalar v)) => LinearMap2D v -> [Scalar v]
+eigenvalues (LinearMap2D a00 a01 a10 a11) =
+    case compare radical 0 of
+      EQ -> [sol1]
+      LT -> []
+      GT -> [sol1, sol2]
+  where
+    a = 1
+    b = negate (a00 + a11)
+    c = a00 * a11 - a01 * a10
+    radical = b * b - 4 * a * c
+    sol1 = (negate b + sqrt radical) / (2 * a)
+    sol2 = (negate b - sqrt radical) / (2 * a)
+
+data EigenSolution v = Single v | AllV deriving(Show)
+eigenvectors :: (BasisSpace v, Eq (Scalar v), Floating (Scalar v)) => LinearMap2D v -> Scalar v -> EigenSolution v
+eigenvectors (LinearMap2D a00 a01 a10 a11) eigenvalue
+  | c1 == 0 && c2 == 0 = AllV
+  | c1 == 0 = Single i
+  | c2 == 0 = Single j
+  | otherwise = Single $ x *^ i ^+^ y *^ j
+  where
+    c1 = a00 - a10 - eigenvalue
+    c2 = a11 - a01 - eigenvalue
+    z = 1 + (c2 / c1) ^ 2
+    x = 2 / sqrt z
+    y = c1 / c2 * x
+    [i, j] = basisVectors
+
+keypressMap :: EvStream t Event -> Conversion -> Behavior t (Reactive t (LinearMap2D (VectorP Plot)))
+keypressMap evs _ = do
+  let keyPresses = filterMap isKeyboardPressedEvent evs
+      numberPresses = fmap digitToInt $ ffilter isDigit keyPresses
+      increment (a, b)
+        | a == 1 && b == 1 = (0, 0)
+        | a == 1 = (0, b + 1)
+        | otherwise = (a + 1, b)
+
+  cursorPos <- foldEs (\c _ -> increment c) (0,0) (void keyPresses)
+
+  let changeMap (LinearMap2D a00 a01 a10 a11) (x,y) v
+        | x == 0 && y == 0 = LinearMap2D v a01 a10 a11
+        | x == 0 && y == 1 = LinearMap2D a00 v a10 a11
+        | x == 1 && y == 0 = LinearMap2D a00 a01 v a11
+        | x == 1 && y == 1 = LinearMap2D a00 a01 a10 v
+
+  foldEs (\lm (c,n) -> changeMap lm c (fromInteger $ toInteger n)) (LinearMap2D 0 1 1 1) ((,) <$> cursorPos <@> numberPresses)
+
 data IJ = I | J | None deriving (Eq, Show)
-bMouseDrag :: Reactive t (VectorP Plot) -> EvStream t Event -> Conversion -> Behavior t (Reactive t (VectorP Plot), Reactive t (VectorP Plot))
-bMouseDrag bPlotVector evs convInfo = do
+bMouseDrag :: EvStream t Event -> Conversion -> Behavior t (Reactive t (VectorP Plot), Reactive t (VectorP Plot))
+bMouseDrag evs convInfo = do
   let mouseClicks = filterMap isMouseClickEvent evs
 
   rec

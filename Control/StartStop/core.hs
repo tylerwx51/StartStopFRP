@@ -12,6 +12,10 @@ import Control.Concurrent.MVar
 import System.IO.Unsafe
 import System.Mem.Weak
 
+{-
+- Time is used internally in StartStopFRP. In this implementation it is an integer
+- with the round number.
+-}
 newtype Time = T Integer deriving (Eq, Ord, Show)
 
 newtype Sample t a = Sample { unSample :: ReaderT Time IO a } deriving (Functor, Applicative, Monad, MonadFix, MonadIO)
@@ -365,49 +369,58 @@ liftBehavior b = PlanHold $ do
   tell (mempty, p)
   return a
 
+createWeakStrongPair :: a -> IO (IORef a, Weak (IORef a))
+createWeakStrongPair iv = do
+  ref <- newIORef iv
+  weakRef <- mkWeakIORef ref (return ())
+  return (ref, weakRef)
+
+createWeakStrongEvPair :: EvStream t a -> IO (EvStream t a, EvStream t a)
+createWeakStrongEvPair evs = do
+  (ref, weakRef) <- createWeakStrongPair evs
+  let strongEvs = EvStream $ Sample $ do
+                    es <- liftIO $ readIORef ref
+                    unSample $ sampleEvStream es
+
+      weakEvs = EvStream $ Sample $ do
+                  mres <- liftIO $ deRefWeak weakRef
+                  case mres of
+                    Nothing -> return NotFired
+                    Just res -> do
+                      es <- liftIO $ readIORef res
+                      unSample $ sampleEvStream es
+
+  return (strongEvs, weakEvs)
 
 holdEs :: forall t a . a -> EvStream t a -> Behavior t (Reactive t a)
 holdEs iv evs = Behavior $ do
+  {- Get the time the holding starts. This is used to supress any events
+  -- that fire during the round the behavior starts.
+  -}
   startTime <- lift getCurTime
 
-  let toPush = catMaybeEs $ startOnFire $ flip fmap (listenPushes evs) $ \(a, p) -> Behavior $ do
-                            t <- lift getCurTime
-                            if startTime == t
-                            then return Nothing
-                            else return $ Just (t, a, p)
+  (ref, weakRef) <- liftIO $ createWeakStrongPair (Nothing, iv, mempty)
+  (strongEvs, weakEvs) <- liftIO $ createWeakStrongEvPair evs
+  let toPushWeak = EvStream $ do
+                      t <- getCurTime
+                      if startTime == t
+                      then return NotFired
+                      else do
+                        eInfo <- sampleEvStream weakEvs
+                        case eInfo of
+                          NotFired -> return NotFired
+                          FiredNow v p -> return $ FiredNow (t, v, p) p
 
-  toPushRef <- liftIO $ newIORef toPush
-  toPushWeakRef <- liftIO $ mkWeakIORef toPushRef (return ())
-
-  let strongPush = EvStream $ do
-              evs <- liftIO $ readIORef toPushRef
-              case evs of
-                Never -> return NotFired
-                EvStream es -> es
-
-      weakPush = EvStream $ do
-                  evsRef <- liftIO $ deRefWeak toPushWeakRef
-                  case evsRef of
-                    Just evsR -> do
-                      evs <- liftIO $ readIORef evsR
-                      case evs of
-                        Never -> return NotFired
-                        EvStream me -> me
-                    Nothing -> return NotFired
-
-  ref <- liftIO $ newIORef (iv, mempty, Nothing)
-  weakRef <- liftIO $ mkWeakIORef ref (return ())
-
-  let primaryPushes :: PushStream t
+      primaryPushes :: PushStream t
       primaryPushes = Pls $ do
         mr <- liftIO $ deRefWeak weakRef
         case mr of
           Just r -> do
-            eInfo <- sampleEvStream weakPush
+            eInfo <- sampleEvStream toPushWeak
             case eInfo of
               NotFired -> return (PNotFired, primaryPushes)
               FiredNow (t, newVal, newEffects) _ -> do
-                let pushAction = writeIORef r (newVal, newEffects, Just t)
+                let pushAction = writeIORef r (Just t, newVal, newEffects)
                 return (PFired pushAction, primaryPushes)
           Nothing -> return (PNotFired, PNever)
 
@@ -416,12 +429,12 @@ holdEs iv evs = Behavior $ do
         mr <- liftIO $ deRefWeak weakRef
         case mr of
           Just r -> do
-            (v, subEffects, t) <- liftIO $ readIORef r
+            (t, v, subEffects) <- liftIO $ readIORef r
             case subEffects of
               PNever -> return (PNotFired, subPushes)
               Pls mSubEffects -> do
                 (pInfo, pNew) <- mSubEffects
-                liftIO $ writeIORef r (v,pNew,t)
+                liftIO $ writeIORef r (t, v, pNew)
                 return (pInfo, subPushes)
           Nothing -> return (PNotFired, PNever)
 
@@ -429,6 +442,6 @@ holdEs iv evs = Behavior $ do
   tell subPushes
 
   return $ Reactive $ do
-    (v, effects, _) <- liftIO $ readIORef ref
-    let lastChange = liftIO $ (\(_,_,sct) -> sct) <$> readIORef ref
-    return $ ReactiveInfo v ((\(_,v,_) -> v) <$> strongPush) lastChange effects
+    (_, v, effects) <- liftIO $ readIORef ref
+    let lastChange = liftIO $ (\(sct,_,_) -> sct) <$> readIORef ref
+    return $ ReactiveInfo v strongEvs lastChange effects

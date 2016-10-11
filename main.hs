@@ -71,8 +71,8 @@ main2 = runGlossHoldIO (InWindow "X-Y Pos" (500, 500) (10, 10)) white 60 $ \tick
 -}
 
 data Screen t = Screen { bPic :: Reactive t Picture, bChange :: EvStream t (Screen t) }
-main2 :: IO ()
-main2 = runGlossHoldIO (InWindow "Examples" (500, 500) (10, 10)) white 60 $ \tick ev -> liftBehavior $ do
+main :: IO ()
+main = runGlossHoldIO (InWindow "Examples" (500, 500) (10, 10)) white 60 $ \tick ev -> liftBehavior $ do
           bTime <- foldEs (+) 0 tick
           let clock = changes bTime
           (Screen bm buttonPress) <- mainMenu clock ev
@@ -163,6 +163,8 @@ drawPlot points = color (Gloss.black) . (Gloss.line) $ shiftedPoints
     min_x = minimum $ fmap fst points
     shiftedPoints = fmap (\(x,y) -> (x - max_x, y)) points
 
+{-
 main = runBehavior 1000000 $ \tick -> do
   bTime <- switcher (return 0) $ startOnFire $ fmap (\_ -> holdEs 0 tick) $ ffilter (\x -> x `rem` 3 == 0) tick
   return $ fmap show bTime
+-}
