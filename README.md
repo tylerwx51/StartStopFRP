@@ -63,7 +63,7 @@ drawPlot points = color (Gloss.black) . (Gloss.line) $ shiftedPoints
     max_x = maximum $ fmap fst points
     min_x = minimum $ fmap fst points
     shiftedPoints = fmap (\(x,y) -> (x - max_x, y)) points
-    
+
 -- This takes the clock and a behavior, it then produces a behaivor whos value is a list of samples of b.
 holdLastNSecs :: Float -> EvStream t Float -> Behavior t a -> Hold t (Behavior t [(Float, a)])
 holdLastNSecs holdTime clock b = foldEs (\vs (t, v) -> (t, v) : filter ((> t - holdTime) . fst) vs) (flip (,) <$> b <@> clock) []
@@ -74,10 +74,10 @@ mouseTrackerExample clock ev = do
   bMousePos <- holdEs (filterMap (\xs -> case filterMap isMouseChange xs of
                                       [] -> Nothing
                                       (x:_) -> Just x) ev) (0,0)
-  
+
   -- a behavior whos value is a list of samples of the mouses position for the last 5 seconds
   bMousePosData <- holdLastNSecs 5 clock (fmap snd bMousePos)
-  
+
   return $ fmap (translate 0 0 . scale 50 1 . drawPlot) bMousePosData
 ```
 
@@ -99,7 +99,7 @@ decayColorLine vs = foldl' (flip (<>)) mempty $ fmap (\(t, (x, y)) -> color (tim
     timeColor t = makeColor (timeRed t) (timeBlue t) 0 1
 
     pair = zipWith (\(t, pos1) (_, pos2) -> (t, [pos1, pos2])) vs (drop 1 vs)
-    
+
 mouseTrailExample :: EvStream t Float -> EvStream t [Event] -> Hold t (Behavior t Picture)
 mouseTrailExample clock ev = do
   bMousePos <- holdEs (filterMapEs (\xs -> case filterMap isMouseChange xs of
