@@ -112,10 +112,10 @@ memoEvs (EvStream sampleEvs) = EvStream $ memoSample $ memoSample sampleEvs
 
 {-# NOINLINE memoReactive #-}
 memoReactive :: Reactive t a -> Reactive t a
-memoReactive r = unsafePerformIO $ do
+memoReactive r = r{-unsafePerformIO $ do
   currentRef <- newIORef Nothing
   futureRef <- newIORef Nothing
-  return $ usePrevR currentRef futureRef r
+  return $ usePrevR currentRef futureRef r-}
 
 usePrevR :: forall t a . IORef (Maybe (Maybe Time, a, PushStream t))
          -> IORef (Maybe (Maybe Time, a, PushStream t))
@@ -263,7 +263,11 @@ switch revs = EvStream $ do
   rInfo <- sampleReactive revs
   case currentValue rInfo of
     Never -> return NotFired
-    EvStream em' -> em'
+    EvStream em' -> do
+      einfo <- em'
+      case einfo of
+        NotFired -> return NotFired
+        FiredNow v rs -> return $ FiredNow v (rs <> sideEffects rInfo)
 
 runPushes :: BehaviorInternal t a -> Sample t (a, PushStream t)
 runPushes = runWriterT

@@ -48,7 +48,7 @@ cabal-version:       >=1.10
 
 library
   -- Modules exported by the library.
-  exposed-modules: Control.StartStop.Core, Control.StartStop.Lib, Control.StartStop.TestFun, Control.StartStop.EvPrim, Control.StartStop.Gloss, Control.StartStop.Chart
+  exposed-modules: Control.StartStop.Core, Control.StartStop.Lib, Control.StartStop.EvPrim, Control.StartStop.Gloss
 
   -- Modules included in this library but not exported.
   -- other-modules:
@@ -71,7 +71,6 @@ library
 executable example
   main-is:             main.hs
   build-depends:       base >=4.8 && <4.9, mtl, transformers, gloss > 1.10, gloss-algorithms
-                       , Chart, Chart-cairo
   extra-lib-dirs:       /usr/lib
   default-language:    Haskell2010
   ghc-options:

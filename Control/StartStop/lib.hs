@@ -3,6 +3,7 @@ module Control.StartStop.Lib where
 
 import Control.StartStop.Core
 import Control.Monad
+import Data.Monoid
 
 
 {- Starts the given hold, if its returned value is not Nothing. This is
@@ -116,3 +117,31 @@ ffilter :: (FilterFunctor f) => (a -> Bool) -> f a -> f a
 ffilter p = filterMap (\v -> boolToMaybe (p v) v)
   where
     boolToMaybe b v = if b then Just v else Nothing
+
+data Updates t s = Updates (s -> (Updates t s, EvStream t (s -> s)))
+                 | None
+
+updater :: (s -> EvStream t (s -> s)) -> Updates t s
+updater f = Updates ((\e -> (None, e)) . f)
+
+instance Monoid (Updates t s) where
+  mempty = None
+  mappend None u = u
+  mappend u None = u
+  mappend (Updates f) u2 = Updates ((\(u, e) -> (u <> u2, e)) . f)
+
+runUpdates :: s -> Updates t s -> Behavior t (Reactive t s)
+runUpdates iv updates = do
+  rec
+    let ups = switch $ fmap (flip updateEvStream updates) rState
+    rState <- foldEs (\s f -> f s) iv ups
+
+  return rState
+
+updateEvStream :: s -> Updates t s -> EvStream t (s -> s)
+updateEvStream state (Updates f) = nextFire
+  where
+    (next, evs) = f state
+    nextEvs = updateEvStream state next
+    nextFireNextFire = mergefEs const (fmap (\fs -> updateEvStream (fs state) next) evs) (nextEvs <$ nextEvs)
+    nextFire = coincidence nextFireNextFire

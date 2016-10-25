@@ -39,40 +39,9 @@ decayColorLine vs = foldl' (flip (<>)) mempty $ fmap (\(t, (x, y)) -> color (tim
 
     pair = zipWith (\(t, pos1) (_, pos2) -> (t, [pos1, pos2])) vs (drop 1 vs)
 
-{-
-main2 = runGlossHoldIO (InWindow "X-Y Pos" (500, 500) (10, 10)) white 60 $ \tick ev -> do
-  let getDelta (EventMotion (dx, dy)) = Just (dx, dy)
-      getDelta _ = Nothing
-
-  bTime <- liftHold $ foldEs' (+) tick 0
-  let clock = changes bTime
-  bMousePos <- liftHold $ holdEs (filterMapEs getDelta $ fmap head ev) (0,0)
-  bTrail <- liftHold $ holdLastNSecs 1.2 clock bMousePos
-
-  let mouseClickEvent (EventKey (MouseButton LeftButton) Up _ _) = Just False
-      mouseClickEvent (EventKey (MouseButton LeftButton) Down _ _) = Just True
-      mouseClickEvent _ = Nothing
-
-  bMouseState <- liftHold $ holdEs (filterMapEs mouseClickEvent $ fmap head ev) False
-
-  let isPEvent (EventKey (Char 'p') Up _ _) = True
-      isPEvent _ = False
-
-  bMousePosData <- liftHold $ holdLastNSecs 3 clock (fmap undefined bMousePos)
-  --planEs $ fmap (\xs -> mapM_ (\x -> return $! x) xs) $ changes bMousePosData
-  bMouseStateData <- liftHold $ holdLastNSecs 3 clock (fmap (\p -> if not p then (0 :: Float) else 200) bMouseState)
-  let bPlot1 = fmap (plot . Chart.line "Mouse Held" . return) bMousePosData
-      bPlot2 = fmap (plot . Chart.line "Mouse Held" . return) bMouseStateData
-
-  plotAtTime "Chart-Gloss.png" (filterEs isPEvent $ fmap head ev) ((>>) <$> bPlot1 <*> bPlot2)
-  planEs $ print "Should plot" <$ filterEs isPEvent (fmap head ev)
-
-  return $ fmap decayColorLine bTrail
--}
-
 data Screen t = Screen { bPic :: Reactive t Picture, bChange :: EvStream t (Screen t) }
-main :: IO ()
-main = runGlossHoldIO (InWindow "Examples" (500, 500) (10, 10)) white 60 $ \tick ev -> liftBehavior $ do
+main2 :: IO ()
+main2 = runGlossHoldIO (InWindow "Examples" (500, 500) (10, 10)) white 60 $ \tick ev -> liftBehavior $ do
           bTime <- foldEs (+) 0 tick
           let clock = changes bTime
           (Screen bm buttonPress) <- mainMenu clock ev
@@ -163,8 +132,10 @@ drawPlot points = color (Gloss.black) . (Gloss.line) $ shiftedPoints
     min_x = minimum $ fmap fst points
     shiftedPoints = fmap (\(x,y) -> (x - max_x, y)) points
 
-{-
+constant :: a -> Reactive t a
+constant = return
+
 main = runBehavior 1000000 $ \tick -> do
-  bTime <- switcher (return 0) $ startOnFire $ fmap (\_ -> holdEs 0 tick) $ ffilter (\x -> x `rem` 3 == 0) tick
-  return $ fmap show bTime
--}
+  rTime <- holdEs 0 tick
+  rFinal <- foldEs (flip const) (return 0) $ fmap constant $ snapshots rTime tick
+  return $ fmap show $ join rFinal
