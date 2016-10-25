@@ -33,7 +33,7 @@ Return is the same as pure. So (return x) a constant behavior whos value is alwa
 
 ## Examples:
 
-![](https://github.com/tylerwx51/StartStopFRP/blob/master/clickexample.gif)
+![](https://github.com/tylerwx51/StartStopFRP/blob/master/Example Images/clickexample.gif)
 
 ```
 clickExample :: EvStream t [Event] -> Hold t (Behavior t Picture)
@@ -53,7 +53,7 @@ clickExample ev = do
   return $ fmap positionToText bLastMouseClick
 ```
 
-![](https://github.com/tylerwx51/StartStopFRP/blob/master/mousetracker.gif)
+![](https://github.com/tylerwx51/StartStopFRP/blob/master/Example Images/mousetracker.gif)
 
 ```
 -- Takes a list of (x,y) corrdenates and produces a Picture which is a plot.
@@ -81,7 +81,7 @@ mouseTrackerExample clock ev = do
   return $ fmap (translate 0 0 . scale 50 1 . drawPlot) bMousePosData
 ```
 
-![](https://github.com/tylerwx51/StartStopFRP/blob/master/mousetrail.gif)
+![](https://github.com/tylerwx51/StartStopFRP/blob/master/Example Images/mousetrail.gif)
 
 ```
 holdLastNSecs :: Float -> EvStream t Float -> Behavior t a -> Hold t (Behavior t [(Float, a)])
