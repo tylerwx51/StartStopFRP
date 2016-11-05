@@ -30,7 +30,7 @@ version = Version [0,1,0,0] []
 bindir, libdir, datadir, libexecdir, sysconfdir :: FilePath
 
 bindir     = "/Users/Tyler/Documents/Haskell/StartStopFRP/.cabal-sandbox/bin"
-libdir     = "/Users/Tyler/Documents/Haskell/StartStopFRP/.cabal-sandbox/lib/x86_64-osx-ghc-7.10.3/StartStopFRP-0.1.0.0-Ia6oHr27mfF8suoxVmfLPH"
+libdir     = "/Users/Tyler/Documents/Haskell/StartStopFRP/.cabal-sandbox/lib/x86_64-osx-ghc-7.10.3/StartStopFRP-0.1.0.0-6h95S0jFn0f9iVtSOpJ3Lv"
 datadir    = "/Users/Tyler/Documents/Haskell/StartStopFRP/.cabal-sandbox/share/x86_64-osx-ghc-7.10.3/StartStopFRP-0.1.0.0"
 libexecdir = "/Users/Tyler/Documents/Haskell/StartStopFRP/.cabal-sandbox/libexec"
 sysconfdir = "/Users/Tyler/Documents/Haskell/StartStopFRP/.cabal-sandbox/etc"

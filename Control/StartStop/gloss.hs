@@ -1,8 +1,8 @@
+{-# LANGUAGE Rank2Types #-}
 module Control.StartStop.Gloss where
 
-import Control.StartStop.Core
-import Control.StartStop.EvPrim
-import Control.StartStop.Run
+import Control.StartStop.Class
+import Control.StartStop.AnotherCore (initACorePlanHold)
 
 import Control.Monad.IO.Class
 
@@ -10,7 +10,7 @@ import Data.IORef
 
 import Graphics.Gloss.Interface.IO.Game
 
-runGlossHoldIO :: Display -> Color -> Int -> (EvStream t Float -> EvStream t [Event] -> PlanHold t (Reactive t Picture)) -> IO ()
+runGlossHoldIO :: Display -> Color -> Int -> (forall t . (StartStopIO t) => EvStream t Float -> EvStream t [Event] -> PlanHold t (Reactive t Picture)) -> IO ()
 runGlossHoldIO displayMode bgColor fps bPicture = do
   actionsRef <- newIORef []
   pictureRef <- newIORef undefined
@@ -19,7 +19,9 @@ runGlossHoldIO displayMode bgColor fps bPicture = do
   eventTriggerRef <- newIORef undefined
   renderTriggerRef <- newIORef undefined
 
-  let pl = do
+  let
+    pl :: forall t . (StartStopIO t) => PlanHold t ()
+    pl = do
         (timeTrigger, clock) <- callbackStream
         (eventTrigger, events) <- callbackStream
         --(renderTrigger, renderEv) <- callbackStream
@@ -29,19 +31,19 @@ runGlossHoldIO displayMode bgColor fps bPicture = do
         --liftIO $ writeIORef renderTriggerRef renderTrigger
 
         bPic <- bPicture (fmap head clock) events
-        let renderPic = startOnFire $ liftReactiveAfter bPic <$ clock
+        let renderPic = samples $ sampleRAfter bPic <$ clock
         planEs $ flip fmap renderPic $ \pic -> liftIO $ writeIORef pictureRef pic
 
-        inital <- liftBehavior $ liftReactiveAfter bPic
+        inital <- sampleB $ sampleRAfter bPic
         liftIO $ writeIORef pictureRef inital
         return ()
 
-      runActions = do
+    runActions = do
         actions <- readIORef actionsRef
         writeIORef actionsRef []
         sequence_ actions
 
-  initPlanHold (\a -> modifyIORef actionsRef (\as -> as ++ [a])) pl
+  initACorePlanHold (\a -> modifyIORef actionsRef (\as -> as ++ [a])) pl
   playIO displayMode
          bgColor
          fps

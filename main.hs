@@ -1,10 +1,9 @@
-{-# LANGUAGE RecursiveDo #-}
+{-# LANGUAGE RecursiveDo, BangPatterns #-}
 module Main where
 
 import Control.StartStop.Gloss
-import Control.StartStop.Core
-import Control.StartStop.Lib
-import Control.StartStop.Run
+import Control.StartStop.AnotherCore (runACoreBehavior)
+import Control.StartStop.Class
 import Control.Monad
 
 import Graphics.Gloss
@@ -23,8 +22,8 @@ reallySeqList (x:xs) = reallySeqList xs
 rseq :: [a] -> [a]
 rseq xs = reallySeqList xs xs
 
-holdLastNSecs :: Float -> EvStream t Float -> Reactive t a -> Behavior t (Reactive t [(Float, a)])
-holdLastNSecs holdTime clock b = foldEs (\vs (t, v) -> rseq $ (t, v) : filter ((> t - holdTime) . fst) vs) [] (flip (,) <$> b <@> clock)
+holdLastNSecs :: (StartStop t) => Float -> EvStream t Float -> Reactive t a -> Behavior t (Reactive t [(Float, a)])
+holdLastNSecs holdTime clock b = foldEs (\vs (t, v) -> rseq $ (t, v) : filter ((> t - holdTime) . fst) vs) [] (flip (,) <$> sampleR b <@> clock)
 
 decayColorLine :: [(Float, (Float, Float))] -> Picture
 decayColorLine vs = foldl' (flip (<>)) mempty $ fmap (\(t, (x, y)) -> color (timeColor t) $ translate x y $ circleSolid 10) $ vs
@@ -40,13 +39,14 @@ decayColorLine vs = foldl' (flip (<>)) mempty $ fmap (\(t, (x, y)) -> color (tim
     pair = zipWith (\(t, pos1) (_, pos2) -> (t, [pos1, pos2])) vs (drop 1 vs)
 
 data Screen t = Screen { bPic :: Reactive t Picture, bChange :: EvStream t (Screen t) }
-main2 :: IO ()
-main2 = runGlossHoldIO (InWindow "Examples" (500, 500) (10, 10)) white 60 $ \tick ev -> liftBehavior $ do
+
+main :: IO ()
+main = runGlossHoldIO (InWindow "Examples" (500, 500) (10, 10)) white 60 $ \tick ev -> sampleB $ do
           bTime <- foldEs (+) 0 tick
           let clock = changes bTime
           (Screen bm buttonPress) <- mainMenu clock ev
           rec
-            let stream = switch active
+            let stream = switch $ sampleR active
             active <- holdEs buttonPress (fmap bChange stream)
 
           switcher bm $ fmap bPic stream
@@ -68,23 +68,24 @@ isMouseChange :: Event -> Maybe (Float, Float)
 isMouseChange (EventMotion (dx, dy)) = Just (dx, dy)
 isMouseChange _ = Nothing
 
-mainMenu :: EvStream t Float -> EvStream t [Event] -> Behavior t (Screen t)
+
+mainMenu :: (StartStop t) => EvStream t Float -> EvStream t [Event] -> Behavior t (Screen t)
 mainMenu clock ev = do
   let clickButton = renderButton extentClick "Click Example"
       clickButtonEvent = void $ ffilter (any (isClickedBy extentClick)) ev
-      enterClick = startOnFire ((exampleToScreen clock ev =<< (clickExample ev)) <$ clickButtonEvent)
+      enterClick = samples ((exampleToScreen clock ev =<< (clickExample ev)) <$ clickButtonEvent)
 
       mouseTrackButton = renderButton extentMouseTracker "Mouse Tracker"
       mouseButtonEvent = void $ ffilter (any (isClickedBy extentMouseTracker)) ev
-      enterMouse = startOnFire ((exampleToScreen clock ev =<< (mouseTrackerExample clock ev)) <$ mouseButtonEvent)
+      enterMouse = samples ((exampleToScreen clock ev =<< (mouseTrackerExample clock ev)) <$ mouseButtonEvent)
 
       mouseTrailButton = renderButton extentMouseTrail "Mouse Trail"
       mouseTrailEvent = void $ ffilter (any (isClickedBy extentMouseTrail)) ev
-      enterTrail = startOnFire ((exampleToScreen clock ev =<< (mouseTrailExample clock ev)) <$ mouseTrailEvent)
+      enterTrail = samples ((exampleToScreen clock ev =<< (mouseTrailExample clock ev)) <$ mouseTrailEvent)
 
-  return $ Screen (return $ clickButton <> mouseTrackButton <> mouseTrailButton) (foldr1 leftmost [enterClick, enterMouse, enterTrail])
+  return $ Screen (return $ clickButton <> mouseTrackButton <> mouseTrailButton) (leftmost [enterClick, enterMouse, enterTrail])
 
-clickExample :: EvStream t [Event] -> Behavior t (Reactive t Picture)
+clickExample :: (StartStop t) => EvStream t [Event] -> Behavior t (Reactive t Picture)
 clickExample ev = do
   -- filter ev down to only the first mouse click event.
   let mouseClickEvs = filterMap (\xs -> case filterMap isMouseClickEvent xs of
@@ -100,7 +101,7 @@ clickExample ev = do
   -- return a behavior whos current value is the current screen to draw.
   return $ fmap positionToText bLastMouseClick
 
-mouseTrackerExample :: EvStream t Float -> EvStream t [Event] -> Behavior t (Reactive t Picture)
+mouseTrackerExample :: (StartStop t) => EvStream t Float -> EvStream t [Event] -> Behavior t (Reactive t Picture)
 mouseTrackerExample clock ev = do
   bMousePos <- holdEs (0, 0) (filterMap (\xs -> case filterMap isMouseChange xs of
                                       [] -> Nothing
@@ -108,7 +109,7 @@ mouseTrackerExample clock ev = do
   bMousePosData <- holdLastNSecs 5 clock (fmap snd bMousePos)
   return $ fmap (translate 0 0 . scale 50 1 . drawPlot) bMousePosData
 
-mouseTrailExample :: EvStream t Float -> EvStream t [Event] -> Behavior t (Reactive t Picture)
+mouseTrailExample :: (StartStop t) => EvStream t Float -> EvStream t [Event] -> Behavior t (Reactive t Picture)
 mouseTrailExample clock ev = do
   bMousePos <- holdEs (0,0) (filterMap (\xs -> case filterMap isMouseChange xs of
                                       [] -> Nothing
@@ -117,11 +118,11 @@ mouseTrailExample clock ev = do
 
   return $ fmap decayColorLine bTrail
 
-exampleToScreen :: EvStream t Float -> EvStream t [Event] -> Reactive t Picture -> Behavior t (Screen t)
+exampleToScreen :: (StartStop t) => EvStream t Float -> EvStream t [Event] -> Reactive t Picture -> Behavior t (Screen t)
 exampleToScreen clock ev bPic = do
   let extentBack = makeExtent (negate 250 + 35) (negate 250 + 5) (250 - 10) (250 - 90)
       backButton = renderButton extentBack "Back"
-      backEvent = startOnFire (mainMenu clock ev <$ ffilter (any (isClickedBy extentBack)) ev)
+      backEvent = samples (mainMenu clock ev <$ ffilter (any (isClickedBy extentBack)) ev)
 
   return $ Screen (fmap (<> backButton) bPic) backEvent
 
@@ -132,10 +133,12 @@ drawPlot points = color (Gloss.black) . (Gloss.line) $ shiftedPoints
     min_x = minimum $ fmap fst points
     shiftedPoints = fmap (\(x,y) -> (x - max_x, y)) points
 
-constant :: a -> Reactive t a
+constant :: (StartStop t) => a -> Reactive t a
 constant = return
 
-main = runBehavior 1000000 $ \tick -> do
-  rTime <- holdEs 0 tick
-  rFinal <- foldEs (flip const) (return 0) $ fmap constant $ snapshots rTime tick
-  return $ fmap show $ join rFinal
+main2 = do
+  action <- runACoreBehavior $ \tick -> do
+    rTime <- foldEs (\(!a) (!b) -> a + b) 0 tick
+    return $ fmap show rTime
+
+  mapM_ (\_ -> action) [0..1000000]
