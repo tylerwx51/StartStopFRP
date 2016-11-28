@@ -25,6 +25,7 @@ class (Functor f) => FilterFunctor f where
     --}
 
 instance FilterFunctor [] where
+  filterMap _ [] = []
   filterMap f (x : xs) = case f x of
     Nothing -> filterMap f xs
     Just y -> y : filterMap f xs

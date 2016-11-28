@@ -1,13 +1,24 @@
-{-# LANGUAGE GeneralizedNewtypeDeriving, DoAndIfThenElse, ScopedTypeVariables, DeriveFunctor #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving,
+             DoAndIfThenElse,
+             ScopedTypeVariables,
+             DeriveFunctor,
+             TypeOperators,
+             TypeFamilies #-}
 
 module Control.StartStop.Core where
 
 import Control.Applicative
+import Control.Concurrent.MVar
 import Control.Monad.Reader
 import Control.Monad.Writer.Strict
+import qualified Control.StartStop.Class as Class
+import Control.StartStop.Class ((.:), ffilter)
+import Control.Arrow
 
 import Data.IORef
-import Control.Concurrent.MVar
+import Data.Map.Strict as Map
+import Data.Unique
+import Data.Functor.Compose
 
 import System.IO.Unsafe
 import System.Mem.Weak
@@ -20,62 +31,135 @@ newtype Time = T Integer deriving (Eq, Ord, Show)
 
 newtype Sample t a = Sample { unSample :: ReaderT Time IO a } deriving (Functor, Applicative, Monad, MonadFix, MonadIO)
 
-{-
-PushStream is similar to EvStream.
-PushStream also returns an updated version of itself. So if at time t a stream "original" has
-the value (pInfo, self), we know the following:
-  Semantically, self = original
-However, it can remove streams that are known to no longer fire, therefore removing
-them from taking space and having to be run.
--}
-data PushInfo a = PNotFired | PFired !a deriving(Functor)
-data PushStream t = PNever | Pls (Sample t (PushInfo (IO ()), PushStream t))
+newtype WritePhase t a = WritePhase { runWritePhase :: IO a } deriving (Functor, Applicative, Monad)
 
-evStreamToPushStream :: EvStream t (Maybe (IO ())) -> PushStream t
-evStreamToPushStream Never = PNever
-evStreamToPushStream evs@(EvStream s) = Pls $ do
-  eInfo <- s
-  case eInfo of
-    NotFired -> return (PNotFired, evStreamToPushStream evs)
-    FiredNow mv _ -> case mv of
-      Just v -> return (PFired v, evStreamToPushStream evs)
-      Nothing -> return (PNotFired, PNever)
+writeIORefWrite :: IORef a -> a -> Phase t ()
+writeIORefWrite ref v = Compose $ return $ Compose $ (WritePhase $ writeIORef ref v) >> (return $ pure ())
 
-mergePushStream :: PushStream t -> PushStream t -> PushStream t
-mergePushStream PNever p = p
-mergePushStream p PNever = p
-mergePushStream (Pls leftS) (Pls rightS) = Pls $ do
-  (leftPushInfo, leftNext) <- leftS
-  (rightPushInfo, rightNext) <- rightS
-  let nextStream = mergePushStream leftNext rightNext
-  case (leftPushInfo, rightPushInfo) of
-    (PNotFired, PNotFired) -> return (PNotFired, nextStream)
-    (PNotFired, rInfo) -> return (rInfo, nextStream)
-    (lInfo, PNotFired) -> return (lInfo, nextStream)
-    (PFired leftIO, PFired rightIO) -> return (PFired $ leftIO >> rightIO, nextStream)
+modifyIORefWrite :: IORef a -> (a -> a) -> Phase t ()
+modifyIORefWrite ref f = Compose $ return $ Compose $ (WritePhase $ modifyIORef ref f) >> (return $ pure ())
 
-instance Monoid (PushStream t) where
-  mempty = PNever
-  mappend = mergePushStream
+newtype CleanUpPhase t a = CleanUpPhase { runCleanUpPhase :: IO a } deriving (Functor, Applicative, Monad)
+
+writeIORefClean :: IORef a -> a -> CleanUpPhase t ()
+writeIORefClean ref v = CleanUpPhase $ writeIORef ref v
+
+runAndCleanUp :: (RoundSequence t -> CleanUpPhase t ()) -> RoundSequence t -> Phase t ()
+runAndCleanUp f rs = Compose $ do
+  writePhase <- getCompose $ runRoundSequence rs
+  return $ Compose $ do
+    cleanUpPhase <- getCompose writePhase
+    return $ do
+      rsNew <- cleanUpPhase
+      f rsNew
+
+type Phase t a = (Sample t `Compose` WritePhase t `Compose` CleanUpPhase t) a
+data RoundAction t = NoAction
+                   | RoundAction (Phase t (RoundAction t))
+newtype RoundSequence t = RoundSequence (Map Unique (RoundAction t)) deriving (Monoid)
+
+isNoAction :: RoundAction t -> Bool
+isNoAction NoAction = True
+isNoAction _ = False
+
+runRoundAction :: RoundAction t -> Phase t (RoundAction t)
+runRoundAction NoAction = pure NoAction
+runRoundAction (RoundAction p) = p
+
+runRoundSequence :: RoundSequence t -> Phase t (RoundSequence t)
+runRoundSequence (RoundSequence phaseMap) = RoundSequence . Map.filter (not . isNoAction) <$> traverse runRoundAction phaseMap
+
+newRoundSequence :: RoundAction t -> Sample t (RoundSequence t)
+newRoundSequence action = do
+  identifier <- Sample $ liftIO newUnique
+  return $ RoundSequence $ singleton identifier action
+
+runPhase :: Phase t a -> ReaderT Time IO a
+runPhase phase = do
+  writePhase <- unSample $ getCompose phase
+  cleanUpPhase <- lift $ runWritePhase $ getCompose writePhase
+  lift $ runCleanUpPhase cleanUpPhase
 
 getCurTime :: Sample t Time
 getCurTime = Sample ask
 
+data ActiveInfo = Active | ActiveFuture | NotActive deriving(Show, Eq)
+newtype Activity t = Activity (Sample t ActiveInfo)
+data TimeValue t a = TimeValue !a !(Activity t) !(RoundSequence t) deriving (Functor)
+
+instance Monoid (Activity t) where
+  mempty = Activity $ return Active
+  mappend (Activity l) (Activity r) = Activity (liftA2 cmp l r)
+    where
+      cmp Active x = x
+      cmp x Active = x
+      cmp NotActive _ = NotActive
+      cmp _ NotActive = NotActive
+      cmp ActiveFuture ActiveFuture = ActiveFuture
+
+instance Applicative (TimeValue t) where
+  pure = return
+  (<*>) = ap
+
+instance Monad (TimeValue t) where
+  return x = TimeValue x mempty mempty
+  (TimeValue a aactive ase) >>= f = TimeValue b (aactive <> bactive) (ase <> bse)
+    where
+      (TimeValue b bactive bse) = f a
+
 data EvInfo t a = NotFired
-                | FiredNow !a !(PushStream t) deriving(Functor)
+                | FiredNow !a !(RoundSequence t) deriving(Functor)
 
 data EvStream t a = Never
                   | EvStream (Sample t (EvInfo t a))
 
-type BehaviorInternal t a = WriterT (PushStream t) (Sample t) a
-newtype Behavior t a = Behavior { runB :: BehaviorInternal t a } deriving (Functor, Applicative, Monad, MonadFix)
+newtype Behavior t a = Behavior { runB :: Sample t (TimeValue t a) }
 
-data ReactiveInfo t a = ReactiveInfo { currentValue :: !a
-                                     , changesInfo :: EvStream t a
-                                     , lastChangeTime :: Sample t (Maybe Time)
-                                     , sideEffects :: PushStream t
-                                     }
-data Reactive t a = Reactive { sampleReactive :: Sample t (ReactiveInfo t a) }
+instance Functor (Behavior t) where
+  fmap = liftM
+
+instance Applicative (Behavior t) where
+  pure = return
+  (<*>) = ap
+
+instance Monad (Behavior t) where
+  return x = Behavior $ return $ return x
+  (Behavior sTime) >>= f = memoB $ Behavior $ do
+    (TimeValue a aactive ase) <- sTime
+    (TimeValue b bactive bse) <- runB $ f a
+    return $ TimeValue b (aactive <> bactive) (ase <> bse)
+
+instance MonadFix (Behavior t) where
+  mfix f = Behavior $ mfix (\(~(TimeValue a _ _)) -> runB $ f a)
+
+noMemoBMap :: (a -> b) -> Behavior t a -> Behavior t b
+noMemoBMap f = Behavior . fmap (fmap f) . runB
+
+{-# NOINLINE memoB #-}
+memoB :: Behavior t a -> Behavior t a
+memoB b = unsafePerformIO $ do
+  ref <- newIORef Nothing
+  return $ usePrevB ref b
+
+usePrevB :: IORef (Maybe (TimeValue t a)) -> Behavior t a -> Behavior t a
+usePrevB ref b = Behavior $ do
+  let reRun = do
+        tv <- runB b
+        liftIO $ writeIORef ref (Just tv)
+        return tv
+  mtv <- liftIO $ readIORef ref
+  case mtv of
+    Just tv@(TimeValue v (Activity activity) se) -> do
+      aInfo <- activity
+      case aInfo of
+        NotActive -> reRun
+        Active -> return tv
+        _ -> error "Invariant Broken."
+    _ -> reRun
+
+data Reactive t a = Reactive { changes_ :: EvStream t (a, Activity t)
+                             , sampleCurrent :: Sample t (TimeValue t a)
+                             }
 
 sampleEvStream :: EvStream t a -> Sample t (EvInfo t a)
 sampleEvStream Never = return NotFired
@@ -96,9 +180,9 @@ memoSample s = unsafePerformIO $ do
 --}
 usePrevSample :: IORef (Maybe (Time, a)) -> Sample t a -> Sample t a
 usePrevSample currentValRef recalcSample = do
-  mvt <- liftIO $ readIORef currentValRef
+  mtv <- liftIO $ readIORef currentValRef
   curTime <- getCurTime
-  case mvt of
+  case mtv of
     Just (t, v)
       | t == curTime -> return v
     _ -> do
@@ -112,70 +196,92 @@ memoEvs (EvStream sampleEvs) = EvStream $ memoSample $ memoSample sampleEvs
 
 {-# NOINLINE memoReactive #-}
 memoReactive :: Reactive t a -> Reactive t a
-memoReactive r = r{-unsafePerformIO $ do
+memoReactive r = unsafePerformIO $ do
   currentRef <- newIORef Nothing
   futureRef <- newIORef Nothing
-  return $ usePrevR currentRef futureRef r-}
+  return $ usePrevR currentRef futureRef r
 
-usePrevR :: forall t a . IORef (Maybe (Maybe Time, a, PushStream t))
-         -> IORef (Maybe (Maybe Time, a, PushStream t))
+usePrevR :: forall t a . IORef (Maybe (TimeValue t a))
+         -> IORef (Maybe (TimeValue t a))
          -> Reactive t a
          -> Reactive t a
-usePrevR currentRef futureRef r = Reactive $ do
-  rInfo <- sampleReactive r
-  let mostRecentChange = lastChangeTime rInfo
-      changes = EvStream $ do
-        mtv' <- liftIO $ readIORef futureRef
-        curTime <- getCurTime
-        case mtv' of
-          Just (t', v', p')
-            | t' == Just curTime -> return $ FiredNow v' p'
-          _ -> do
-            changeInfo <- sampleEvStream $ changesInfo rInfo
-            case changeInfo of
-              NotFired -> return NotFired
-              FiredNow v' p' -> do
-                liftIO $ writeIORef futureRef $ Just (Just curTime, v', p')
-                return $ FiredNow v' p'
+usePrevR currentRef futureRef r = Reactive readChanges readCurrent
+  where
+    reRunCurrent = do
+      tv <- sampleCurrent r
+      liftIO $ writeIORef currentRef (Just tv)
+      return tv
 
-      reRun :: Sample t (ReactiveInfo t a)
-      reRun = do
-        curTime <- getCurTime
-        (ReactiveInfo v _ _ p) <- sampleReactive r
-        liftIO $ writeIORef currentRef $ Just (Just curTime, v, p)
-        return $ ReactiveInfo v changes mostRecentChange p
+    reRunFuture = do
+      eInfo <- sampleEvStream (changes_ r)
+      case eInfo of
+        NotFired -> do
+          liftIO $ writeIORef futureRef Nothing
+          return NotFired
+        FiredNow (v, activity) rs -> do
+          liftIO $ writeIORef futureRef (Just $ TimeValue v activity rs)
+          return $ FiredNow (v, activity) rs
 
-  mtv <- liftIO $ readIORef currentRef
-  lastChange <- mostRecentChange
+    readCurrent = do
+      mtv <- liftIO $ readIORef currentRef
+      case mtv of
+        Just tv@(TimeValue _ (Activity av) _) -> do
+          aInfo <- av
+          case aInfo of
+            NotActive -> readFuture
+            Active -> return tv
+            ActiveFuture -> error "Invariant broken."
+        _ -> readFuture
 
-  case mtv of
-    Just (t, v, p)
-      | t > lastChange -> return $ ReactiveInfo v changes mostRecentChange p
-    _ -> do
-      mtv' <- liftIO $ readIORef futureRef
-      case mtv' of
-        Just (t', v', p')
-          | t' == lastChange -> return $ ReactiveInfo v' changes mostRecentChange p'
-        _ -> reRun
+    readFuture = do
+      mtv <- liftIO $ readIORef futureRef
+      case mtv of
+        Just tv@(TimeValue _ (Activity av) _) -> do
+          aInfo <- av
+          case aInfo of
+            Active -> do
+              liftIO $ writeIORef currentRef (Just tv)
+              return tv
+            _ -> reRunCurrent
+        _ -> reRunCurrent
+
+    readChanges = EvStream $ do
+      mtv <- liftIO $ readIORef futureRef
+      case mtv of
+        Just tv@(TimeValue v act@(Activity av) rs) -> do
+          aInfo <- av
+          case aInfo of
+            ActiveFuture -> return $ FiredNow (v, act) rs
+            Active -> do
+              liftIO $ writeIORef currentRef (Just tv)
+              reRunFuture
+            NotActive -> reRunFuture
+        _ -> reRunFuture
 
 instance Functor (EvStream t) where
-  fmap f evs = memoEvs (noMemoFmap f evs)
+  fmap f evs = memoEvs (noMemoEMap f evs)
 
-noMemoFmap :: (a -> b) -> EvStream t a -> EvStream t b
-noMemoFmap f Never = Never
-noMemoFmap f (EvStream sValue) = EvStream $ fmap (fmap f) sValue
+noMemoEMap :: (a -> b) -> EvStream t a -> EvStream t b
+noMemoEMap f Never = Never
+noMemoEMap f (EvStream sValue) = EvStream $ fmap (fmap f) sValue
+
+instance Class.FilterFunctor (EvStream t) where
+  filterMap = catMaybeEs .: fmap
 
 instance Functor (Reactive t) where
-  fmap f r = memoReactive $ Reactive $ do
-    (ReactiveInfo a changes lct se) <- sampleReactive r
-    return $ ReactiveInfo (f a) (noMemoFmap f changes) lct se
+  fmap = memoReactive .: noMemoRMap
+
+noMemoRMap :: (a -> b) -> Reactive t a -> Reactive t b
+noMemoRMap f r = Reactive (first f <$> changes_ r) $ do
+  (TimeValue a active se) <- sampleCurrent r
+  return $ TimeValue (f a) active se
 
 instance Applicative (Reactive t) where
   pure = return
   (<*>) = ap
 
 instance Monad (Reactive t) where
-  return x = Reactive $ return $ ReactiveInfo x never (return Nothing) PNever
+  return x = Reactive never (return $ return x)
   ra >>= f = joinR (fmap f ra)
 
 mostRecent :: Sample t (Maybe Time) -> Sample t (Maybe Time) -> Sample t (Maybe Time)
@@ -187,33 +293,30 @@ mostRecent smt1 smt2 = maxOfJust <$> smt1 <*> smt2
     maxOfJust Nothing Nothing = Nothing
 
 joinR :: forall t a . Reactive t (Reactive t a) -> Reactive t a
-joinR rra = Reactive $ do
-  (ReactiveInfo ra rraChanges lcrra serra) <- sampleReactive rra
-  (ReactiveInfo a raChanges lcra sera) <- sampleReactive ra
+joinR rra = Reactive changesA $ do
+  (TimeValue ra raactive rase) <- sampleCurrent rra
+  (TimeValue a aactive ase) <- sampleCurrent ra
+  return $ TimeValue a (raactive <> aactive) (rase <> ase)
 
-  let changesA :: EvStream t a
-      changesA = EvStream $ do
-        (ReactiveInfo ra rraChanges lcrra serra) <- sampleReactive rra
-        rraChangeInfo <- sampleEvStream rraChanges
-        case rraChangeInfo of
-          NotFired -> do
-            (ReactiveInfo a raChanges lcra sera) <- sampleReactive ra
-            raChangeInfo <- sampleEvStream raChanges
-            case raChangeInfo of
-              NotFired -> return NotFired
-              FiredNow a' sera' -> return $ FiredNow a' (serra <> sera')
+  where
+    changesA :: EvStream t (a, Activity t)
+    changesA = EvStream $ do
+      rraChangeInfo <- sampleEvStream $ changes_ rra
+      case rraChangeInfo of
+        NotFired -> do
+          (TimeValue ra raactive rase) <- sampleCurrent rra
+          raChangeInfo <- sampleEvStream $ changes_ ra
+          case raChangeInfo of
+            NotFired -> return NotFired
+            FiredNow (a', aactive) sera' -> return $ FiredNow (a', raactive <> aactive) (rase <> sera')
 
-          FiredNow ra' prra' -> do
-            (ReactiveInfo a raChanges lcra sera) <- sampleReactive ra'
-            raChangeInfo <- sampleEvStream raChanges
-            case raChangeInfo of
-              NotFired -> return $ FiredNow a (prra' <> sera)
-              FiredNow a' sera' -> return $ FiredNow a' (prra' <> sera')
-
-  return $ ReactiveInfo a changesA (mostRecent lcrra lcra) (serra <> sera)
-
-instance MonadFix (Reactive t) where
-  mfix f = Reactive $ mfix (\(~(ReactiveInfo a _ _ _)) -> sampleReactive $ f a)
+        FiredNow (ra', raactive) prra' -> do
+          raChangeInfo <- sampleEvStream $ changes_ ra'
+          case raChangeInfo of
+            NotFired -> do
+              (TimeValue a aactive ase) <- sampleCurrent ra'
+              return $ FiredNow (a, raactive <> aactive) (prra' <> ase)
+            FiredNow (a', aactive) sera' -> return $ FiredNow (a', raactive <> aactive) (prra' <> sera')
 
 never :: EvStream t a
 never = Never
@@ -258,31 +361,28 @@ mergefEs f (EvStream mel) (EvStream mer) = EvStream $ do
     (NotFired, FiredNow r p) -> return $ FiredNow r p
     (FiredNow l pl, FiredNow r pr) -> return $ FiredNow (f l r) (pl <> pr)
 
-switch :: Reactive t (EvStream t a) -> EvStream t a
-switch revs = EvStream $ do
-  rInfo <- sampleReactive revs
-  case currentValue rInfo of
+switch :: Behavior t (EvStream t a) -> EvStream t a
+switch bevs = EvStream $ do
+  (TimeValue evs _ brs) <- runB bevs
+  case evs of
     Never -> return NotFired
     EvStream em' -> do
       einfo <- em'
       case einfo of
         NotFired -> return NotFired
-        FiredNow v rs -> return $ FiredNow v (rs <> sideEffects rInfo)
+        FiredNow v rs -> return $ FiredNow v (brs <> rs)
 
-runPushes :: BehaviorInternal t a -> Sample t (a, PushStream t)
-runPushes = runWriterT
-
-startOnFire :: EvStream t (Behavior t a) -> EvStream t a
-startOnFire Never = Never
-startOnFire (EvStream sampleEvs) = EvStream $ do
+samples :: EvStream t (Behavior t a) -> EvStream t a
+samples Never = Never
+samples (EvStream sampleEvs) = EvStream $ do
   eInfo <- sampleEvs
   case eInfo of
     NotFired -> return NotFired
-    FiredNow (Behavior ba) pba -> do
-      (a, pa) <- runPushes ba
+    FiredNow ba pba -> do
+      (TimeValue a _ pa) <- runB ba
       return $ FiredNow a (pba <> pa)
 
-listenPushes :: EvStream t a -> EvStream t (a, PushStream t)
+listenPushes :: EvStream t a -> EvStream t (a, RoundSequence t)
 listenPushes Never = Never
 listenPushes (EvStream sEInfo) = EvStream $ do
   eInfo <- sEInfo
@@ -290,24 +390,18 @@ listenPushes (EvStream sEInfo) = EvStream $ do
     NotFired -> return NotFired
     FiredNow a p -> return $ FiredNow (a, p) p
 
-liftReactive :: Reactive t a -> Behavior t a
-liftReactive r = Behavior $ do
-  (ReactiveInfo v _ _ p) <- lift $ sampleReactive r
-  tell p
-  return v
+sampleR :: Reactive t a -> Behavior t a
+sampleR r = Behavior $ sampleCurrent r
 
-liftReactiveAfter :: Reactive t a -> Behavior t a
-liftReactiveAfter r = Behavior $ do
-  (ReactiveInfo v changes _ p) <- lift $ sampleReactive r
-  changeInfo <- lift $ sampleEvStream changes
+sampleRAfter :: Reactive t a -> Behavior t a
+sampleRAfter r = Behavior $ do
+  changeInfo <- sampleEvStream (changes_ r)
   case changeInfo of
-    NotFired -> tell p >> return v
-    FiredNow v' p' -> tell p' >> return v'
+    NotFired -> sampleCurrent r
+    FiredNow (v', vactive) p' -> return $ TimeValue v' vactive p'
 
 changes :: Reactive t a -> EvStream t a
-changes r = EvStream $ do
-  rInfo <- sampleReactive r
-  sampleEvStream $ changesInfo rInfo
+changes = noMemoEMap fst . changes_
 
 newtype Plans t = Plans (EvStream t ())
 
@@ -318,7 +412,7 @@ instance Monoid (Plans t) where
 data Env = Env { clock :: IO Time
                , scheduleRound :: IO ()
                }
-newtype PlanHold t a = PlanHold { unPlanHold :: WriterT (Plans t, PushStream t) (ReaderT Env IO) a } deriving (Functor, Applicative, Monad, MonadFix, MonadIO)
+newtype PlanHold t a = PlanHold { unPlanHold :: WriterT (Plans t, RoundSequence t) (ReaderT Env IO) a } deriving (Functor, Applicative, Monad, MonadFix, MonadIO)
 
 unsafeIOSequence :: EvStream t (IO a) -> IO (EvStream t a)
 unsafeIOSequence evs = do
@@ -352,12 +446,6 @@ unsafeIOSequence evs = do
 unsafeIOMap :: EvStream t (IO a) -> EvStream t a
 unsafeIOMap = unsafePerformIO . unsafeIOSequence . fmap liftIO
 
-unsafePlan :: EvStream t (IO a) -> Behavior t (EvStream t a)
-unsafePlan evs = Behavior $ do
-  plans <- liftIO $ unsafeIOSequence evs
-  tell $ evStreamToPushStream $ Just (return ()) <$ plans
-  return plans
-
 planEs :: EvStream t (IO a) -> PlanHold t (EvStream t a)
 planEs Never = return Never
 planEs evs = PlanHold $ do
@@ -365,11 +453,11 @@ planEs evs = PlanHold $ do
   tell (Plans $ void plans, mempty)
   return plans
 
-liftBehavior :: Behavior t a -> PlanHold t a
-liftBehavior b = PlanHold $ do
+sampleB :: Behavior t a -> PlanHold t a
+sampleB b = PlanHold $ do
   iot <- asks clock
   t <- liftIO iot
-  (a, p) <- liftIO $ runReaderT (unSample $ runWriterT $ runB b) t
+  (TimeValue a _ p) <- liftIO $ runReaderT (unSample $ runB b) t
   tell (mempty, p)
   return a
 
@@ -398,54 +486,135 @@ createWeakStrongEvPair evs = do
 
 holdEs :: forall t a . a -> EvStream t a -> Behavior t (Reactive t a)
 holdEs iv evs = Behavior $ do
-  {- Get the time the holding starts. This is used to supress any events
-  -- that fire during the round the behavior starts.
-  -}
-  startTime <- lift getCurTime
+  startTime <- getCurTime
 
-  (ref, weakRef) <- liftIO $ createWeakStrongPair (Nothing, iv, mempty)
   (strongEvs, weakEvs) <- liftIO $ createWeakStrongEvPair evs
-  let toPushWeak = EvStream $ do
-                      t <- getCurTime
-                      if startTime == t
-                      then return NotFired
-                      else do
-                        eInfo <- sampleEvStream weakEvs
-                        case eInfo of
-                          NotFired -> return NotFired
-                          FiredNow v p -> return $ FiredNow (t, v, p) p
+  (activeValueRef, activeValueWeakRef) <- liftIO $ createWeakStrongPair (iv, strongEvs)
+  activeRSRef <- liftIO $ newIORef mempty
+  lastChangeRef <- liftIO $ newIORef Nothing
 
-      primaryPushes :: PushStream t
-      primaryPushes = Pls $ do
-        mr <- liftIO $ deRefWeak weakRef
-        case mr of
-          Just r -> do
-            eInfo <- sampleEvStream toPushWeak
-            case eInfo of
-              NotFired -> return (PNotFired, primaryPushes)
-              FiredNow (t, newVal, newEffects) _ -> do
-                let pushAction = writeIORef r (Just t, newVal, newEffects)
-                return (PFired pushAction, primaryPushes)
-          Nothing -> return (PNotFired, PNever)
+  let readFires = sampleEvStream weakEvs
+      changeAction = RoundAction $ Compose $ do
+        mAValueref <- liftIO $ deRefWeak activeValueWeakRef
 
-      subPushes :: PushStream t
-      subPushes = Pls $ do
-        mr <- liftIO $ deRefWeak weakRef
-        case mr of
-          Just r -> do
-            (t, v, subEffects) <- liftIO $ readIORef r
-            case subEffects of
-              PNever -> return (PNotFired, subPushes)
-              Pls mSubEffects -> do
-                (pInfo, pNew) <- mSubEffects
-                liftIO $ writeIORef r (t, v, pNew)
-                return (pInfo, subPushes)
-          Nothing -> return (PNotFired, PNever)
+        case mAValueref of
+          Nothing -> return $ pure NoAction
+          Just ref -> do
+            t <- getCurTime
+            fireInfo <- readFires
+            case fireInfo of
+              FiredNow v rs
+                | startTime /= t -> getCompose $  modifyIORefWrite ref (\(_,e) -> (v,e))
+                                               *> writeIORefWrite lastChangeRef (Just t)
+                                               *> runAndCleanUp (writeIORefClean activeRSRef) rs
+                                               *> pure changeAction
 
-  tell primaryPushes
-  tell subPushes
+              _ -> do
+                activeRS <- liftIO $ readIORef activeRSRef
+                getCompose $  runAndCleanUp (writeIORefClean activeRSRef) activeRS
+                           *> pure changeAction
 
-  return $ Reactive $ do
-    (_, v, effects) <- liftIO $ readIORef ref
-    let lastChange = liftIO $ (\(sct,_,_) -> sct) <$> readIORef ref
-    return $ ReactiveInfo v strongEvs lastChange effects
+  thisRS <- newRoundSequence changeAction
+
+  let changes = EvStream $ do
+        eTime <- getCurTime
+        evInfo <- sampleEvStream strongEvs
+        case evInfo of
+          FiredNow v se
+            | startTime /= eTime -> do
+              etSample <- liftIO $ readIORef lastChangeRef
+              let lastChange = Activity $ do
+                    curTime <- getCurTime
+                    case compare eTime curTime of
+                      LT -> do
+                        t <- liftIO $ readIORef lastChangeRef
+                        case compare t etSample of
+                          EQ -> return Active
+                          GT -> return NotActive
+                      EQ -> return ActiveFuture
+                      GT -> error "Invariant Broken (Somehow sampled before the event? WTF!!)."
+              return $ FiredNow (v, lastChange) se
+          _ -> return NotFired
+
+      cmp curTime = case compare startTime curTime of
+        GT -> NotActive
+        EQ -> Active
+        LT -> error "Invariant Broken."
+
+      reactive = Reactive changes $ do
+        (v,_) <- liftIO $ readIORef activeValueRef
+        tSample <- liftIO $ readIORef lastChangeRef
+        let lastChange = Activity $ do
+              t <- liftIO $ readIORef lastChangeRef
+              case compare t tSample of
+                GT -> return NotActive
+                EQ -> return Active
+                LT -> error "Invariant Broken."
+
+        effects <- liftIO $ readIORef activeRSRef
+        return $ TimeValue v lastChange effects
+
+  return $ TimeValue reactive (Activity $ fmap cmp getCurTime) thisRS
+
+data Core t
+instance Class.StartStop (Core t) where
+  newtype Behavior (Core t) a = B { unB :: Behavior t a } deriving (Functor, Applicative, Monad, MonadFix)
+  newtype Reactive (Core t) a = R { unR :: Reactive t a } deriving (Functor, Applicative, Monad)
+  newtype EvStream (Core t) a = E { unE :: EvStream t a } deriving (Functor, Class.FilterFunctor)
+
+  never = E never
+  merge e1 e2 = E $ mergefEs (\(Class.LeftFired a) (Class.RightFired b) -> Class.Simul a b) (noMemoEMap Class.LeftFired $ unE e1) (noMemoEMap Class.RightFired $ unE e2)
+  samples = E . samples . noMemoEMap unB . unE
+  switch = E . switch . noMemoBMap unE . unB
+  coincidence = E . coincidence . noMemoEMap unE . unE
+  holdEs iv evs = B $ noMemoBMap R $ holdEs iv (unE evs)
+  sampleR = B . sampleR . unR
+  sampleRAfter = B . sampleRAfter . unR
+  changes = E . changes . unR
+
+reallySeqList :: [a] -> b -> b
+reallySeqList [] = seq []
+reallySeqList (x:xs) = reallySeqList xs
+
+callbackStream :: PlanHold t (a -> IO (), EvStream t [a])
+callbackStream = do
+  cl <- PlanHold $ asks clock
+  sr <- PlanHold $ asks scheduleRound
+  currentValRef <- liftIO $ newIORef Nothing
+  futureValRef <- liftIO $ newIORef []
+
+  let trigger v = do
+        (T curTime) <- cl
+        let t = T (curTime + 1)
+        modifyIORef' futureValRef ((t, v):)
+        sr
+
+      evs = EvStream $ do
+              t <- getCurTime
+              mtvs <- liftIO $ readIORef currentValRef
+              vs <- case mtvs of
+                Just (t', vs)
+                  | t' == t -> return vs
+                _ -> do
+                  tvs <- liftIO $ readIORef futureValRef
+                  let vs' = fmap snd . ffilter (\(t', v) -> t == t') $ tvs
+                  liftIO $ writeIORef currentValRef (Just (t, vs'))
+                  liftIO $ modifyIORef' futureValRef (\vs -> let vs' = ffilter (\(t', v) -> t < t') vs in reallySeqList vs' vs')
+                  return vs'
+
+              --vs <- mapM return vs' -- fixes some leak that is caused by laziness with vs'
+
+              case vs of
+                [] -> return NotFired
+                _ -> return $ FiredNow vs mempty
+
+  _ <- planEs $ return () <$ evs
+  return (trigger, evs)
+
+instance Class.StartStopIO (Core t) where
+  newtype PlanIO (Core t) a = PIO { unPIO :: IO a } deriving (Functor, Applicative, Monad, MonadFix, MonadIO)
+  newtype PlanHold (Core t) a = P { unP :: PlanHold t a } deriving (Functor, Applicative, Monad, MonadFix, MonadIO)
+
+  callbackStream = P $ fmap (second E) callbackStream
+  planEs = P . fmap E . planEs . noMemoEMap unPIO . unE
+  sampleB = P . sampleB . unB

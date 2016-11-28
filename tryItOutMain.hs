@@ -135,7 +135,8 @@ main = tryItOut $ \clock events -> do
 
   (bIVector, bJVector) <- bMouseDrag events convInfo
   rLmap <- keypressMap events convInfo
-  let bBasisGrid = drawLinearMap <$> rLmap --gridForBasis <$> bIVector <*> bJVector
+  let bBasisGrid = drawLinearMap <$> rLmap
+      b2BasisGrid = gridForBasis <$> bIVector <*> bJVector
       bAVector = liftA2 (\i j -> 3 *^ i ^+^ 2 *^ j) bIVector bJVector
       lmap2text (LinearMap2D a00 a01 a10 a11) = translate (-240) (220) (text (show a00)) <> translate (-240) (220 - 100) (text (show a10)) <> translate (-240 + 200) (220) (text (show a01)) <> translate (-240 + 200) (220 - 100) (text (show a11))
       rText = lmap2text <$> rLmap
@@ -148,7 +149,7 @@ main = tryItOut $ \clock events -> do
       rEvector = (\vs lm -> fmap (ev2evector lm) vs) <$> rEigenVs <*> rLmap
       rDraw = fmap (drawAxis convInfo) $ fmap (\vs -> fold $ fmap (`Vector` green) vs) rEvector
 
-  return $ rText <<>*> rDraw <<>*> rPlotPic
+  return $ fmap (drawAxis convInfo) $ b2BasisGrid <<>*> fmap (`Vector` blue) bIVector <<>*> fmap (`Vector` red) bJVector
 
 dist :: VectorP p -> VectorP p -> Float
 dist (PlotVector x1 y1) (PlotVector x2 y2) = sqrt ((x2 - x1) ^ 2 + (y2 - y1) ^ 2)
@@ -212,7 +213,7 @@ eigenvectors (LinearMap2D a00 a01 a10 a11) eigenvalue
     y = c1 / c2 * x
     [i, j] = basisVectors
 
-keypressMap :: EvStream t Event -> Conversion -> Behavior t (Reactive t (LinearMap2D (VectorP Plot)))
+keypressMap :: (StartStop t) => EvStream t Event -> Conversion -> Behavior t (Reactive t (LinearMap2D (VectorP Plot)))
 keypressMap evs _ = do
   let keyPresses = filterMap isKeyboardPressedEvent evs
       numberPresses = fmap digitToInt $ ffilter isDigit keyPresses
@@ -229,10 +230,10 @@ keypressMap evs _ = do
         | x == 1 && y == 0 = LinearMap2D a00 a01 v a11
         | x == 1 && y == 1 = LinearMap2D a00 a01 a10 v
 
-  foldEs (\lm (c,n) -> changeMap lm c (fromInteger $ toInteger n)) (LinearMap2D 0 1 1 1) ((,) <$> cursorPos <@> numberPresses)
+  foldEs (\lm (c,n) -> changeMap lm c (fromInteger $ toInteger n)) (LinearMap2D 0 1 1 1) ((,) <$> sampleR cursorPos <@> numberPresses)
 
 data IJ = I | J | None deriving (Eq, Show)
-bMouseDrag :: EvStream t Event -> Conversion -> Behavior t (Reactive t (VectorP Plot), Reactive t (VectorP Plot))
+bMouseDrag :: (StartStop t) => EvStream t Event -> Conversion -> Behavior t (Reactive t (VectorP Plot), Reactive t (VectorP Plot))
 bMouseDrag evs convInfo = do
   let mouseClicks = filterMap isMouseClickEvent evs
 
@@ -248,9 +249,9 @@ bMouseDrag evs convInfo = do
         isMouseDrag _ _ (EventKey (MouseButton LeftButton) Up _ _) = Just None
         isMouseDrag _ _ _ = Nothing
 
-    bDragging <- holdEs None (filterMap id $ isMouseDrag <$> bIVector <*> bJVector <@> mouseClicks)
+    bDragging <- holdEs None (filterMap id $ isMouseDrag <$> sampleR bIVector <*> sampleR bJVector <@> mouseClicks)
 
-    let evIVector = gate (fmap (==I) bDragging) $ filterMap (fmap (screen2plot convInfo. screenVector) . isMouseChange) evs
-        evJVector = gate (fmap (==J) bDragging) $ filterMap (fmap (screen2plot convInfo. screenVector) . isMouseChange) evs
+    let evIVector = gate (sampleR $ fmap (==I) bDragging) $ filterMap (fmap (screen2plot convInfo. screenVector) . isMouseChange) evs
+        evJVector = gate (sampleR $ fmap (==J) bDragging) $ filterMap (fmap (screen2plot convInfo. screenVector) . isMouseChange) evs
 
   return (bIVector, bJVector)

@@ -2,7 +2,7 @@
 module Control.StartStop.Gloss where
 
 import Control.StartStop.Class
-import Control.StartStop.AnotherCore (initACorePlanHold)
+import Control.StartStop.Run
 
 import Control.Monad.IO.Class
 
@@ -43,7 +43,7 @@ runGlossHoldIO displayMode bgColor fps bPicture = do
         writeIORef actionsRef []
         sequence_ actions
 
-  initACorePlanHold (\a -> modifyIORef actionsRef (\as -> as ++ [a])) pl
+  initCorePlanHold (\a -> modifyIORef actionsRef (\as -> as ++ [a])) pl
   playIO displayMode
          bgColor
          fps

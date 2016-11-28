@@ -1,37 +1,42 @@
-{-# LANGUAGE RecursiveDo #-}
+{-# LANGUAGE RecursiveDo, Rank2Types #-}
 
 module Control.StartStop.Run where
 
+import qualified Control.StartStop.Class as Class
 import Control.StartStop.Core
 import Control.Monad.Reader
 import Control.Monad.Writer.Strict
 
 import Data.IORef
 
-runBehavior :: (Show a) => Integer -> (EvStream t Integer -> Behavior t (Reactive t a)) -> IO ()
-runBehavior numRounds br = do
-  (r, pushes) <- runReaderT (unSample $ runWriterT . runB $ br (EvStream $ getCurTime >>= \(T t) -> return (FiredNow t PNever))) (T 0)
-  loop 0 pushes r
-  where
-    loop :: (Show a) => Integer -> PushStream t -> Reactive t a -> IO ()
-    loop _ PNever _ = return ()
-    loop i (Pls mPush) r = do
+runBehavior :: forall a . (forall t . EvStream t Integer -> Behavior t (Reactive t a)) -> IO (IO a)
+runBehavior f = do
+  let tick = EvStream $ do
+              (T i) <- getCurTime
+              return $ FiredNow i mempty
+      breactive = f tick
+  clock <- newIORef (T 0)
+  (TimeValue reactive _ rs) <- runReaderT (unSample $ runB breactive) (T 0)
+  currentRSRef <- newIORef rs
 
-      (v, _) <- runReaderT (unSample $ runWriterT $ runB $ liftReactive r) (T i)
-      --liftIO $ print (i, v)
+  return $ do
+    time <- readIORef clock
+    (TimeValue v _ _) <- runReaderT (unSample $ sampleCurrent reactive) time
+    rs <- readIORef currentRSRef
 
-      (didPush, nextPush) <- runReaderT (unSample mPush) (T i)
+    newrs <- runReaderT (runPhase $ runRoundSequence rs) time
+    writeIORef currentRSRef rs
 
-      case didPush of
-        PNotFired -> return ()
-        PFired ioAction -> ioAction
+    modifyIORef clock (\(T i) -> T (i + 1))
+    return v
 
-      when (i < numRounds) $ loop (i + 1) nextPush r
+runACoreBehavior :: (forall t . (Class.StartStop t) => Class.EvStream t Integer -> Class.Behavior t (Class.Reactive t a)) -> IO (IO a)
+runACoreBehavior f = runBehavior (noMemoBMap unR . unB . f . E)
 
-initPlanHold :: (IO () -> IO ()) -> PlanHold t () -> IO ()
+initPlanHold :: (IO () -> IO ()) -> (forall t . PlanHold t ()) -> IO ()
 initPlanHold scheduleAction ph = do
   clockRef <- newIORef (T 0)
-  streamRef <- newIORef PNever
+  streamRef <- newIORef mempty
 
   rec
     let env = Env (readIORef clockRef) (scheduleAction loop)
@@ -42,21 +47,17 @@ initPlanHold scheduleAction ph = do
 
         loop = do
           t <- readIORef clockRef
-          pushes <- readIORef streamRef
-          case pushes of
-            PNever -> return ()
-            (Pls pushesSample) -> do
-              runReaderT (unSample planSample) t
-              (eioaction, nextPushes)  <- runReaderT (unSample pushesSample) t
-              case eioaction of
-                PNotFired -> return ()
-                PFired ioaction -> ioaction
+          rs <- readIORef streamRef
+          next <- runReaderT (runPhase (runRoundSequence rs)) t
+          writeIORef streamRef next
 
-              writeIORef streamRef nextPushes
+          runReaderT (unSample planSample) t
+          modifyIORef clockRef (\(T i) -> T $ i + 1)
 
-              modifyIORef clockRef (\(T i) -> T $ i + 1)
-
-    ((), (Plans planEvs, pushes)) <- runReaderT (runWriterT . unPlanHold $ ph) env
-    writeIORef streamRef pushes
+    ((), (Plans planEvs, rs)) <- runReaderT (runWriterT . unPlanHold $ ph) env
+    writeIORef streamRef rs
 
   return ()
+
+initCorePlanHold :: (IO () -> IO ()) -> (forall t . (Class.StartStopIO t) => Class.PlanHold t ()) -> IO ()
+initCorePlanHold sr ph = initPlanHold sr (unP ph)

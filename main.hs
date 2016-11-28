@@ -2,7 +2,7 @@
 module Main where
 
 import Control.StartStop.Gloss
-import Control.StartStop.AnotherCore (runACoreBehavior)
+import Control.StartStop.Run (runACoreBehavior)
 import Control.StartStop.Class
 import Control.Monad
 
@@ -139,6 +139,6 @@ constant = return
 main2 = do
   action <- runACoreBehavior $ \tick -> do
     rTime <- foldEs (\(!a) (!b) -> a + b) 0 tick
-    return $ fmap show rTime
+    return rTime
 
-  mapM_ (\_ -> action) [0..1000000]
+  mapM_ (\_ -> action >>= print) [0..10]
