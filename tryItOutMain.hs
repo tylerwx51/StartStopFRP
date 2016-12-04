@@ -140,8 +140,8 @@ main = tryItOut $ \clock events -> do
       bAVector = liftA2 (\i j -> 3 *^ i ^+^ 2 *^ j) bIVector bJVector
       lmap2text (LinearMap2D a00 a01 a10 a11) = translate (-240) (220) (text (show a00)) <> translate (-240) (220 - 100) (text (show a10)) <> translate (-240 + 200) (220) (text (show a01)) <> translate (-240 + 200) (220 - 100) (text (show a11))
       rText = lmap2text <$> rLmap
-      rPlotPic = fmap (drawAxis convInfo) $ pure (PlotGrid (makeColor 0.2 0.2 0.2 0.2)) <<>*> pure plotAxis <<>*> bBasisGrid -- <<>*> fmap (`Vector` green) bIVector <<>*> fmap (`Vector` red) bJVector <<>*> fmap (`Vector` orange) bAVector
-      rEigenVs = fmap eigenvalues $ rLmap
+      rPlotPic = fmap (drawAxis convInfo) $ pure (PlotGrid (makeColor 0.2 0.2 0.2 0.2)) <<>*> pure plotAxis <<>*> b2BasisGrid <<>*> fmap (`Vector` green) bIVector <<>*> fmap (`Vector` red) bJVector <<>*> fmap (`Vector` orange) bAVector
+      rEigenVs = fmap eigenvalues rLmap
       ev2evector lm v = case eigenvectors lm v of
                       Single a -> a
                       AllV -> PlotVector 1 0
@@ -149,7 +149,7 @@ main = tryItOut $ \clock events -> do
       rEvector = (\vs lm -> fmap (ev2evector lm) vs) <$> rEigenVs <*> rLmap
       rDraw = fmap (drawAxis convInfo) $ fmap (\vs -> fold $ fmap (`Vector` green) vs) rEvector
 
-  return $ fmap (drawAxis convInfo) $ b2BasisGrid <<>*> fmap (`Vector` blue) bIVector <<>*> fmap (`Vector` red) bJVector
+  return rPlotPic
 
 dist :: VectorP p -> VectorP p -> Float
 dist (PlotVector x1 y1) (PlotVector x2 y2) = sqrt ((x2 - x1) ^ 2 + (y2 - y1) ^ 2)

@@ -141,4 +141,4 @@ main2 = do
     rTime <- foldEs (\(!a) (!b) -> a + b) 0 tick
     return rTime
 
-  mapM_ (\_ -> action >>= print) [0..10]
+  mapM_ (\_ -> action) [0..1000000]

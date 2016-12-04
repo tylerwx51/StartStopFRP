@@ -48,7 +48,7 @@ cabal-version:       >=1.10
 
 library
   -- Modules exported by the library.
-  exposed-modules: Control.StartStop.Core, Control.StartStop.Lib, Control.StartStop.EvPrim, Control.StartStop.Gloss
+  exposed-modules: Control.StartStop.Core, Control.StartStop.Class, Control.StartStop.Gloss
 
   -- Modules included in this library but not exported.
   -- other-modules:

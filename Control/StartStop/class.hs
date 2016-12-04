@@ -103,10 +103,10 @@ foldEs f iv es = do
 switcher :: (StartStop t) => Reactive t a -> EvStream t (Reactive t a) -> Behavior t (Reactive t a)
 switcher = fmap join .: holdEs
 
-data Updates t s = Updates (s -> (Updates t s, EvStream t (s -> s)))
+data Updates t s = Updates (s -> (Updates t s, EvStream t s))
                  | NoUpdate
 
-updater :: (StartStop t) => (s -> EvStream t (s -> s)) -> Updates t s
+updater :: (StartStop t) => (s -> EvStream t s) -> Updates t s
 updater f = Updates ((\e -> (NoUpdate, e)) . f)
 
 instance (StartStop t) => Monoid (Updates t s) where
@@ -119,14 +119,14 @@ runUpdates :: (StartStop t) => s -> Updates t s -> Behavior t (Reactive t s)
 runUpdates iv updates = do
   rec
     let ups = switch $ sampleR $ fmap (flip updateEvStream updates) rState
-    rState <- foldEs (\s f -> f s) iv ups
+    rState <- holdEs iv ups
 
   return rState
 
-updateEvStream :: (StartStop t) => s -> Updates t s -> EvStream t (s -> s)
+updateEvStream :: (StartStop t) => s -> Updates t s -> EvStream t s
 updateEvStream _ NoUpdate = never
 updateEvStream state (Updates f) = nextFire
   where
     (next, evs) = f state
     nextEvs = updateEvStream state next
-    nextFire = leftmost [coincidence $ fmap (\fs -> updateEvStream (fs state) next) evs, evs, nextEvs]
+    nextFire = leftmost [coincidence $ fmap (flip updateEvStream next) evs, evs, nextEvs]

@@ -4,6 +4,7 @@ module Control.StartStop.Run where
 
 import qualified Control.StartStop.Class as Class
 import Control.StartStop.Core
+import Control.StartStop.Prim
 import Control.Monad.Reader
 import Control.Monad.Writer.Strict
 
